@@ -34,7 +34,7 @@
     return S.ui('p:settings', () => ({
       fields: [['Timezone', 'Asia/Manila (UTC+8)'], ['Phone', '+63 917 555 0142'], ['Desk', 'Tower 2 · 14F · D-21']],
       nf: { k: '', v: '' },
-      profile: { email: `${me.name.toLowerCase().replace(' ', '.')}@corp.example`, manager: me.role === 'Team Lead' ? 'Service Ops Manager' : 'Andrea Santos' },
+      profile: { email: `${me.name.toLowerCase().replace(' ', '.')}@corp.example`, manager: me.role === 'Manager' ? 'Service Ops Manager' : 'Andrea Santos' },
       hover: null,
       reqs: LEAVE_REQUESTS,
       newLeave: { type: 'Personal leave', from: '', days: 1 },
@@ -77,7 +77,7 @@
               <div class="stack" style="gap:2px">
                 <h2 style="font:600 20px/1.2 var(--f-cond)">${me.name}</h2>
                 <span class="mono ink2">${me.soeid}</span>
-                <span class="pill ${me.role === 'Team Lead' ? 'accent' : 'plain'}" style="align-self:flex-start">${me.role}</span>
+                <span class="pill ${me.role === 'Manager' ? 'accent' : 'plain'}" style="align-self:flex-start">${me.role}</span>
               </div>
             </div>
             <div class="stack">
@@ -114,7 +114,7 @@
                   <ul style="margin:0;padding-left:18px" class="small ink2 stack">${list.map((x) => html`<li>${x}</li>`)}</ul>
                 </div>`
               })}
-              <span class="small muted">Access is assigned by your team lead in Team Management.</span>
+              <span class="small muted">Access is assigned by your manager in Team Management.</span>
             </div>
           </div>
         </div>
@@ -221,7 +221,7 @@
       const { newLeave, reqs } = u
       if (!newLeave.from) return
       const from = new Date(newLeave.from + 'T09:00').getTime()
-      S.set(u, { reqs: [{ id: `LV-${2300 + reqs.length}`, type: newLeave.type, from, to: from + (newLeave.days - 1) * DAY, days: Number(newLeave.days), status: 'Pending', approver: me.role === 'Team Lead' ? 'Service Ops Manager' : 'Andrea Santos' }, ...reqs] })
+      S.set(u, { reqs: [{ id: `LV-${2300 + reqs.length}`, type: newLeave.type, from, to: from + (newLeave.days - 1) * DAY, days: Number(newLeave.days), status: 'Pending', approver: me.role === 'Manager' ? 'Service Ops Manager' : 'Andrea Santos' }, ...reqs] })
       S.dispatch({ type: 'toast', text: 'Leave request sent for approval' })
     },
   })

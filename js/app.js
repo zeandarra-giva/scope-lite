@@ -4,6 +4,7 @@
   const { html, cls, attrs, icon, seg, storage, byId, initials, fmtTime, slaInfo, workspaceById, WORKSPACES } = S
 
   // Account profile is reached from the profile menu at the bottom of the sidebar.
+  // managerOnly pages are hidden from analysts and fall back to Home if opened by link.
   const PAGES = [
     { id: 'home', label: 'Home', icon: 'home', title: 'Queue command', desc: 'Live incident queue, SLA health, staffing and your prioritised work.' },
     { id: 'explorer', label: 'Ticket Explorer', icon: 'search', title: 'Ticket Explorer', desc: 'How every incident was solved: resolution journeys, codes and handover history.' },
@@ -11,7 +12,7 @@
     { id: 'team', label: 'Team Management', icon: 'team', title: 'Team Management', desc: 'Roster, access, shift coverage, attendance and your password vault.' },
     { id: 'kb', label: 'Knowledge Base', icon: 'book', title: 'Knowledge Base', desc: 'Runbooks, policies and live reference data. Publish a page and Copilot can use it.' },
     { id: 'copilot', label: 'Copilot', icon: 'spark', title: 'Copilot', desc: 'Help resolving tickets and reading the operation, grounded in your knowledge base and live data.' },
-    { id: 'suggestions', label: 'Suggestions', icon: 'bulb', title: 'Suggestions', desc: 'Ideas, bugs and workarounds from the team. File one in a few seconds; everyone sees the same list.' },
+    { id: 'suggestions', label: 'Suggestions', icon: 'bulb', title: 'Suggestions', managerOnly: true, desc: 'Ideas, bugs and workarounds from the team. File one in a few seconds; everyone sees the same list.' },
     { id: 'settings', label: 'Account profile', icon: 'user', title: 'Account profile', desc: 'Your profile, access, attendance history, shifts and leave.' },
   ]
   const NAV_GROUPS = [['General', ['home', 'explorer', 'reports']], ['Tools', ['team', 'kb', 'copilot']], ['Team feedback', ['suggestions']]]
@@ -19,6 +20,11 @@
   // Pages register themselves here: S.pages.home = (route) => markup
   S.pages = S.pages || {}
   S.PAGES = PAGES
+
+  // Two sign-in roles. 'lead' is the Manager role's id in state and saved sessions.
+  const isManager = (st) => st.role === 'lead'
+  S.isManager = isManager
+  const canOpen = (p) => !p.managerOnly || isManager(S.state)
 
   // ---------- Routing ----------
   const hashPage = () => { const h = location.hash.replace('#', ''); return PAGES.some((p) => p.id === h) ? h : 'home' }
@@ -64,8 +70,10 @@
     const ws = workspaceById(app.wsId)
     if (!ws) return html`${workspacePicker()}${S.toasts()}${S.takeOverlays()}`
     if (!app.session) return html`${signInPage(ws)}${S.toasts()}${S.takeOverlays()}`
-    // Keep the session in step when the Dev panel switches role.
-    if (app.session !== S.state.role) { app.session = S.state.role; storage.set(SESSION_KEY, S.state.role) }
+    if (!canOpen(PAGES.find((p) => p.id === S.route.page))) {
+      S.route = { page: 'home', key: Date.now() }
+      try { history.replaceState(null, '', '#home') } catch { /* sandboxed frame */ }
+    }
     const route = S.route
     const page = PAGES.find((p) => p.id === route.page)
     const breached = S.state.tickets.filter((t) => slaInfo(t, S.state.now).status === 'Breached').length
@@ -82,9 +90,9 @@
             </div>
           </div>
           <div class="rail-nav">
-            ${NAV_GROUPS.map(([group, ids]) => html`<div style="display:contents">
+            ${NAV_GROUPS.filter(([, ids]) => PAGES.some((p) => ids.includes(p.id) && canOpen(p))).map(([group, ids]) => html`<div style="display:contents">
               <div class="rail-group">${group}</div>
-              ${PAGES.filter((p) => ids.includes(p.id)).map((p) => html`
+              ${PAGES.filter((p) => ids.includes(p.id) && canOpen(p)).map((p) => html`
                 <button class="nav-btn" ${attrs({ 'aria-current': route.page === p.id ? 'page' : null })} data-click="app.nav" data-v="${p.id}">
                   ${icon(p.icon)}${p.label}
                   ${p.id === 'home' && breached > 0 && html`<span class="nav-count" title="Tickets past SLA">${breached}</span>`}
@@ -112,7 +120,7 @@
         </div>
       </div>
       ${S.toasts()}
-      ${devTools()}
+      ${isManager(S.state) ? devTools() : ''}
       ${S.state.tour && S.Tour ? S.Tour() : ''}
       ${S.suggestModal ? S.suggestModal() : ''}
       <div class="overlay-layer">${S.takeOverlays()}</div>`
@@ -228,7 +236,7 @@
             </button>`)}
         </div>
         <div class="muted small" style="padding:8px 14px;border-top:1px solid var(--line)">
-          ${st.role === 'lead' ? 'Team lead view: SLA risk across the whole queue, fix approvals, handovers, leave and coverage.' : 'Analyst view: your SLA risk, new assignments, fix decisions and password reminders.'}
+          ${st.role === 'lead' ? 'Manager view: SLA risk across the whole queue, fix approvals, handovers, leave and coverage.' : 'Analyst view: your SLA risk, new assignments, fix decisions and password reminders.'}
         </div>
       </div>`}
     </div>`
@@ -300,7 +308,8 @@
               <span class="dash-chip">Prototype only</span>
             </div>
             <span class="small muted">Signs in as a sample user. No credentials needed. Remove before release.</span>
-            ${seg([{ id: 'lead', label: 'Team lead' }, { id: 'analyst', label: 'Analyst' }], u.role, 'app.signinRole')}
+            ${seg([{ id: 'analyst', label: 'Analyst' }, { id: 'lead', label: 'Manager' }], u.role, 'app.signinRole')}
+            <span class="small muted">${u.role === 'lead' ? 'Everything an analyst has, plus the whole-team view, the Suggestions board and prototype controls.' : 'Your own queue and tools. You can still send suggestions with the Suggest button.'}</span>
             <div class="row" style="flex-wrap:nowrap;gap:10px">
               <span class="avatar">${initials(user.name)}</span>
               <div class="stack" style="gap:0;min-width:0">
@@ -387,11 +396,7 @@
           <span class="spacer"></span>
           <span class="dash-chip">Dev only</span>
         </div>
-        <p class="small muted" style="margin:0">Simulates ServiceNow and sign-in. These controls won't ship in the product.</p>
-        <div class="stack">
-          <span class="eyebrow">View as</span>
-          ${seg([{ id: 'lead', label: 'Team lead' }, { id: 'analyst', label: 'Analyst' }], st.role, 'dev.role')}
-        </div>
+        <p class="small muted" style="margin:0">Simulates ServiceNow and the knowledge base. Managers only; these controls won't ship in the product.</p>
         <div class="stack">
           <span class="eyebrow">Onboarding</span>
           <button class="btn sm primary" style="align-self:flex-start" data-click="dev.tour">${icon('flag', 14)}Start onboarding tour</button>
@@ -422,7 +427,7 @@
       </button>
     </div>`
   }
-  window.addEventListener('keydown', (e) => { if (e.shiftKey && e.altKey && e.code === 'KeyD') S.togglePop('dev') })
+  window.addEventListener('keydown', (e) => { if (e.shiftKey && e.altKey && e.code === 'KeyD' && app.session && isManager(S.state)) S.togglePop('dev') })
 
   // ---------- Handlers ----------
   S.on({
@@ -451,7 +456,6 @@
     'app.sso': () => S.set(S.ui('signin'), { ssoNote: true }),
     'app.signinRole': (el) => S.set(S.ui('signin'), { role: el.dataset.v }),
     'app.devLogin': () => signIn(S.ui('signin').role),
-    'dev.role': (el) => S.dispatch({ type: 'role', role: el.dataset.v }),
     'dev.tour': () => { S.pop = null; S.dispatch({ type: 'tourStart' }) },
     'dev.intake': (el) => S.dispatch({ type: 'intake', priority: el.dataset.v }),
     'dev.burst': () => { for (let i = 0; i < 5; i++) S.dispatch({ type: 'intake' }) },

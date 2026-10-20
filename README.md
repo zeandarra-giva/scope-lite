@@ -10,13 +10,20 @@ All data is generated sample data. ServiceNow and SSO are simulated. The source 
 
 1. Download or clone this folder anywhere (Desktop is fine).
 2. Double-click **`run.bat`**.
-3. Your browser opens at `http://127.0.0.1:8080`. Pick **Solution Center**, then **Dev Login**.
+3. Your browser opens at `http://127.0.0.1:8080`. Pick **Solution Center**, choose a role, then **Dev Login**.
+
+### Roles
+
+- **Analyst:** their own queue and tools. Analysts can send suggestions with the **Suggest** button but don't see the Suggestions board.
+- **Manager:** everything an analyst has, plus the whole-team view, the **Suggestions** board and the **Dev** prototype controls.
+
+To switch roles, log out from the profile menu and sign in again.
 
 Keep the black window open while you use Scope. Closing it stops Scope.
 
 ### Share one Suggestions board with the team
 
-One person (say, the team lead) double-clicks **`share.bat`** instead. The window prints a team link like `http://10.20.30.40:8080/`. Send that link to the team: everyone who opens it files into the same list, and it refreshes every 15 seconds.
+One person (say, the manager) double-clicks **`share.bat`** instead. The window prints a team link like `http://10.20.30.40:8080/`. Send that link to the team: everyone who opens it files into the same list, and it refreshes every 15 seconds.
 
 - All suggestions are saved on the host's computer in `data\suggestions.jsonl`. Copy that file to back them up.
 - If teammates can't open the link, Windows Firewall is blocking the port. Ask IT to allow it, or use the export and import option below.
@@ -27,7 +34,7 @@ Some laptops block PowerShell scripts. When that happens, `run.bat` opens `index
 
 ## Filing a suggestion
 
-Click **Suggest** (top right, on every page), or go to **Suggestions** in the sidebar.
+Click **Suggest** (in the sidebar, on every page). Managers can also go to **Suggestions** in the sidebar.
 
 1. Pick what it is:
    - **Idea:** something Scope should do or do better
@@ -38,11 +45,11 @@ Click **Suggest** (top right, on every page), or go to **Suggestions** in the si
 
 The page you were on is filled in automatically. Your name is remembered on that computer; leave it empty to post as Anonymous.
 
-On the board you can vote, comment, move a suggestion through **New → Reviewing → Planned → Done** (or **Won't do**), filter and search, and use **Export for Excel** to bring the list to a meeting.
+Managers can vote, comment, move a suggestion through **New → Reviewing → Planned → Done** (or **Won't do**), filter and search, and use **Export for Excel** to bring the list to a meeting.
 
 ## Prototype controls
 
-The **Dev** button (bottom right, or <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>D</kbd>) switches between the team lead and analyst views, starts the onboarding tour, simulates ServiceNow intake and resets the sample data. These controls are not part of the product.
+Managers get the **Dev** button (bottom right, or <kbd>Shift</kbd> + <kbd>Alt</kbd> + <kbd>D</kbd>). It starts the onboarding tour, simulates ServiceNow intake and resets the sample data. These controls are not part of the product.
 
 ## For developers
 

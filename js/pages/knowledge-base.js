@@ -77,12 +77,12 @@
     return html`
       <section class="grid g-kpi">
         ${S.kpi({ label: 'Published pages', icon: 'doc', value: live.length, unit: `of ${kb.pages.length}`, foot: `${kb.pages.length - live.length} draft only · ${kb.kbs.length} knowledge bases`,
-          info: html`<span>Pages with at least one published, indexed version. Copilot searches only these.</span><span>A draft-only page is invisible to Copilot until a team lead publishes it.</span>` })}
+          info: html`<span>Pages with at least one published, indexed version. Copilot searches only these.</span><span>A draft-only page is invisible to Copilot until a manager publishes it.</span>` })}
         ${S.kpi({ label: 'Index health', icon: 'check', tone: 'azure', state: failed.length ? 'warn' : undefined, value: kb.pages.filter((p) => p.index === 'indexed').length, unit: 'indexed',
           foot: failed.length ? `${failed.length} failed · Copilot keeps the last good version` : 'Every published page is indexed',
           info: html`<span>Publishing splits a page into passages and indexes them for search.</span><span>If indexing fails, the page shows <b>Index failed</b> and Copilot keeps using the last version that indexed, so a bad edit can't break answers.</span>` })}
         ${S.kpi({ label: 'Unpublished changes', icon: 'clip', tone: 'ice', value: dirty.length, foot: `${kb.pages.filter((p) => p.review).length} waiting for review`,
-          info: html`<span>Published pages with draft edits Copilot can't see yet. Analysts request a review; a team lead publishes.</span>` })}
+          info: html`<span>Published pages with draft edits Copilot can't see yet. Analysts request a review; a manager publishes.</span>` })}
         ${S.kpi({ label: 'Needs attention', icon: 'alert', tone: 'navy', state: issues ? 'warn' : 'good', value: issues, foot: `${conflicts.length} conflicts · ${gaps.length} gaps · ${stale.length} review due`,
           info: html`<span>Sum of: conflicting SLA targets, resolution codes used in the last 30 days without a published runbook, pages not reviewed for ${REVIEW_AFTER_DAYS} days, and failed indexes.</span>` })}
       </section>
@@ -482,7 +482,7 @@
       return { title: seed.title || '', kind: seed.kind || (seed.codes && seed.codes.length ? 'Runbook' : 'How-to'), folderId: (def || folders[0]).id }
     })
     S.modal({
-      title: 'New page', sub: 'It starts as a draft. Copilot can see it once a team lead publishes it.', onClose: 'kb.createClose',
+      title: 'New page', sub: 'It starts as a draft. Copilot can see it once a manager publishes it.', onClose: 'kb.createClose',
       footer: html`<button class="btn" data-click="kb.createClose">Cancel</button><button class="btn primary" ${attrs({ disabled: !f.title.trim() })} data-click="kb.createDo">${icon('plus', 15)}Create draft</button>`,
       body: html`
         <label class="field"><span>Title</span><input id="np-title" class="in" value="${f.title}" data-input="kb.npField" data-f="title" placeholder="e.g. RB-410 Profile rebuild" data-autofocus></label>

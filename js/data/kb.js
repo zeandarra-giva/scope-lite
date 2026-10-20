@@ -60,7 +60,7 @@ GlobalConnect VPN drops or loops on reconnect, usually after a certificate rotat
 ## Steps
 1. Confirm scope in monitoring: one user, a site, or everyone on GlobalConnect VPN.
 2. If more than 20 users are affected, open a P1 and follow the Major incident process.
-3. Push the VPN profile reset via Intune (automated fix NET-VPN-01, needs team lead approval).
+3. Push the VPN profile reset via Intune (automated fix NET-VPN-01, needs manager approval).
 4. Reissue the user certificate from the PKI portal if the reset alone does not hold.
 5. Ask the user to reconnect and stay connected for 10 minutes before you close.
 
@@ -185,7 +185,7 @@ Every breached ticket needs a breach reason code (BR-01 to BR-06) when it is res
 Use this for any P1, or when one cause affects 20 or more users.
 
 ## Steps
-1. The team lead opens the major incident bridge within 15 minutes.
+1. The manager opens the major incident bridge within 15 minutes.
 2. Link every related ticket to one parent incident.
 3. Post a stakeholder update every 30 minutes, even when nothing has changed.
 4. After service is restored, the resolver group writes a problem record within 2 working days.`,
@@ -208,7 +208,7 @@ Transfers cost time. Escalate once, to the right group, with a complete work not
     page({
       id: 'p-ho', folderId: 'f-pol', kind: 'Policy', title: 'Shift handover standard', daysAgo: 75,
       body: `
-Every shift ends with a written handover. The next team lead acknowledges it within 30 minutes.
+Every shift ends with a written handover. The next shift's manager acknowledges it within 30 minutes.
 
 ## A handover includes
 - Open P1 and P2 tickets, with the owner and next step
@@ -283,7 +283,7 @@ Hi {caller}, this is {analyst} from the Solution Center about {ticket}. {status}
     }),
     page({
       id: 'p-oncall', folderId: 'f-ref', kind: 'Reference', title: 'Resolver on-call this week', daysAgo: 1,
-      body: 'Primary on-call for each L3 resolver group. Team leads update this at the start of each week.',
+      body: 'Primary on-call for each L3 resolver group. Managers update this at the start of each week.',
       data: {
         columns: ['Resolver group', 'Primary on-call', 'Bridge / phone', 'Until'],
         source: 'Manual', syncedAt: NOW - 1 * DAY,
@@ -295,7 +295,7 @@ Hi {caller}, this is {analyst} from the Solution Center about {ticket}. {status}
           ['Desktop Engineering', 'P. Lopez', '+63 2 8555 0177', 'Friday 18:00'],
         ].map((cells, i) => ({ id: 'o' + i, cells })),
       },
-      note: 'Escalate to the L3 team lead if on-call does not answer within 15 minutes.',
+      note: 'Escalate to the L3 manager if on-call does not answer within 15 minutes.',
     }),
     page({
       id: 'p-rb320', kbId: 'kb2', folderId: 'f-pay', kind: 'Runbook', codes: ['APP-INT-01'], title: 'RB-320 Integration replay', version: 2, daysAgo: 26,
@@ -305,7 +305,7 @@ Payment batches stuck in pending usually mean the interface to the clearing syst
 ## Steps
 1. Check the dead-letter queue for the affected interface in the integration console.
 2. Confirm with Payments operations that no batch was released manually.
-3. Replay the dead-letter queue (automated fix APP-INT-01, needs team lead approval).
+3. Replay the dead-letter queue (automated fix APP-INT-01, needs manager approval).
 4. Watch the batch move from pending to released, then confirm with the caller.
 
 ## Cut-off times

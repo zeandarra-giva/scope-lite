@@ -264,7 +264,7 @@
         <span class="spacer"></span>
         ${infoTip('explorer-codes', 'Resolution codes', html`
           <span>Format <span class="mono">CATEGORY-SUBCATEGORY-NN</span>, e.g. NET-VPN-01. The category and subcategory come from the root cause picked in the resolution journey.</span>
-          <span>A new code is minted when an analyst marks a fix as new. <b>Auto-fix</b> codes can be proposed as automated fixes that a team lead approves.</span>`)}
+          <span>A new code is minted when an analyst marks a fix as new. <b>Auto-fix</b> codes can be proposed as automated fixes that a manager approves.</span>`)}
       </div>
       <div class="tbl-wrap">
         <table class="tbl">

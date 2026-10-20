@@ -78,7 +78,7 @@
           ${icon('bolt')}
           <div class="stack" style="gap:2px;flex:1;min-width:180px">
             <b>Automated fix available</b>
-            <span class="small ink2">${info.fix}. Runs only after a team lead approves it.</span>
+            <span class="small ink2">${info.fix}. Runs only after a manager approves it.</span>
           </div>
           ${pending
             ? html`<span class="pill ${pending.status === 'Approved' ? 'good' : pending.status === 'Rejected' ? 'crit' : 'warn'}">${pending.id} · ${pending.status}</span>`

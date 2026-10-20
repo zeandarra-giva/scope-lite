@@ -99,7 +99,7 @@
       <div class="small muted cal-foot">
         ${lead
           ? view === 'month' ? 'Month shows leave, weekend duty and holidays; regular shifts are summarised as coverage. Click a bar to change it, or a date to open that day.' : 'Click anyone to change their shift, leave or weekend duty. Coverage turns red when a day drops below minimums.'
-          : 'Read-only for analysts. Ask your team lead to swap shifts.'}
+          : 'Read-only for analysts. Ask your manager to swap shifts.'}
       </div>
       ${edit && shiftEditor(edit, u, code)}
     </section>`

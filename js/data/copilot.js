@@ -5,7 +5,7 @@
 // It answers only from what Scope can look up: published knowledge base pages,
 // live data tables, the queue and ticket history. Every answer lists the
 // tool calls it made and the sources it used. It proposes, never acts:
-// fixes go to a team lead for approval and drafts are copied by a person.
+// fixes go to a manager for approval and drafts are copied by a person.
 //
 // Prototype: the answer is composed in the browser by the rules below, in
 // the shape a model behind the approved AI gateway would return.
@@ -24,7 +24,7 @@ const TOOLS = [
   { id: 'data', fn: 'query_data', label: 'Query data tables', desc: 'Exact lookups in live tables such as the application directory and the on-call rota.' },
   { id: 'queue', fn: 'get_queue', label: 'Read the live queue', desc: 'Open tickets, SLA timers, assignees and who is online, from ServiceNow.' },
   { id: 'history', fn: 'get_metrics', label: 'Read ticket history and metrics', desc: 'Resolved tickets, MTTR, SLA attainment, FCR and transfers.' },
-  { id: 'fixes', fn: 'request_fix', label: 'Propose automated fixes', desc: 'Sends a fix to a team lead for approval. Copilot never runs it.' },
+  { id: 'fixes', fn: 'request_fix', label: 'Propose automated fixes', desc: 'Sends a fix to a manager for approval. Copilot never runs it.' },
   { id: 'drafts', fn: 'draft_text', label: 'Draft customer updates and handovers', desc: 'Writes text for you to check and copy. Copilot never sends it.' },
 ]
 
@@ -33,7 +33,7 @@ const GUARDRAILS = [
   { id: 'liveNumbers', label: 'Live tools for numbers, knowledge base for policy', desc: 'SLA timers, counts and metrics come from the queue and history, never from page text.' },
   { id: 'flagErrors', label: 'Say when a lookup fails', desc: 'A failed search is reported as a failure, not as "nothing found".' },
   { id: 'cite', label: 'Show sources on every answer', desc: 'Each answer lists the pages, tickets and data it used.' },
-  { id: 'approval', label: 'A person approves every action', desc: 'Always on. Fixes need a team lead; drafts are copied, never sent.', locked: true },
+  { id: 'approval', label: 'A person approves every action', desc: 'Always on. Fixes need a manager; drafts are copied, never sent.', locked: true },
 ]
 
 const INSIGHT_TYPES = [
@@ -49,7 +49,7 @@ const INSIGHT_TYPES = [
 const defaultCopilot = () => ({
   name: 'Scope Copilot',
   model: 'claude-sonnet-5-5',
-  instructions: 'You help Solution Center analysts and team leads resolve incidents. Lead with the next action, then the context. Use published runbooks and resolution codes. Quote SLA times from the live queue. Never promise a customer a time we cannot meet.',
+  instructions: 'You help Solution Center analysts and managers resolve incidents. Lead with the next action, then the context. Use published runbooks and resolution codes. Quote SLA times from the live queue. Never promise a customer a time we cannot meet.',
   kbIds: ['kb1', 'kb2'],
   tools: Object.fromEntries(TOOLS.map((t) => [t.id, true])),
   guardrails: Object.fromEntries(GUARDRAILS.map((g) => [g.id, true])),
@@ -178,7 +178,7 @@ function ticketAnswer(c, R, t) {
     const draft = pageForCode(state.kb, c.kbIds, info.code, { published: false })
     step.result = cfg.tools.kb ? (draft ? 'draft only, not indexed' : 'no runbook covers this code') : 'skipped: tool turned off'
     step.ok = !!cfg.tools.kb
-    if (draft) R.note('warn', `**${draft.draft.title}** exists only as a draft, so I can't use it yet. A team lead needs to publish it.`)
+    if (draft) R.note('warn', `**${draft.draft.title}** exists only as a draft, so I can't use it yet. A manager needs to publish it.`)
     else R.note('warn', `No published runbook covers ${info.code}. The steps below are the standard ones, not a runbook.`)
     R.ol([`Confirm scope: is anyone else on **${t.businessApp}** affected?`, `Follow ${info.runbook}.`, `${info.title}.`, `Ask ${t.caller} to confirm service is restored, then log the contact.`])
     R.act({ label: draft ? 'Open the draft' : 'Write the runbook', icon: 'doc', kind: 'nav', page: 'kb', opts: draft ? { page: draft.id } : { create: info.runbook, code: info.code } })
@@ -209,7 +209,7 @@ function fixAction(c, R, t, info) {
   const pending = c.state.approvals.find((x) => x.ticket === t.id)
   if (pending) return R.note(pending.status === 'Rejected' ? 'crit' : 'accent', `Automated fix ${pending.id} for this ticket is **${pending.status.toLowerCase()}**.`)
   if (!c.cfg.tools.fixes) return
-  R.p(`An automated fix is available: ${info.fix}. It runs only after a team lead approves it.`)
+  R.p(`An automated fix is available: ${info.fix}. It runs only after a manager approves it.`)
   R.act({ label: c.lead ? 'Propose automated fix' : 'Request fix approval', icon: 'bolt', kind: 'dispatch', primary: true, action: { type: 'requestFix', ticket: t.id, code: info.code, fix: info.fix, by: c.me.name } })
 }
 

@@ -24,8 +24,8 @@
   }
 
   const ACCESS = {
-    'Team Lead': ['Whole-queue view', 'Rebalance & set analyst status', 'Approve automated fixes', 'Edit schedule, approve leave', 'Team vault compliance (counts only)', 'Coaching scorecards'],
-    Analyst: ['Own work queue + team queue (read)', 'Resolve & document tickets', 'Request automated fixes', 'Own schedule & leave requests', 'Own password vault'],
+    Manager: ['Everything analysts have', 'Whole-queue view', 'Rebalance & set analyst status', 'Approve automated fixes', 'Edit schedule, approve leave', 'Team vault compliance (counts only)', 'Coaching scorecards', 'Suggestions board & prototype controls'],
+    Analyst: ['Own work queue + team queue (read)', 'Resolve & document tickets', 'Request automated fixes', 'Own schedule & leave requests', 'Own password vault', 'Send suggestions'],
   }
 
   // ---------- Roster ----------
@@ -48,7 +48,7 @@
                   <tr data-key="${a.id}">
                     <td class="nowrap"><span class="row tight"><span class="avatar sm">${initials(a.name)}</span><b>${a.name}</b></span></td>
                     <td class="mono">${a.soeid}</td>
-                    <td><span class="pill ${a.role === 'Team Lead' ? 'accent' : 'plain'}">${a.role}</span></td>
+                    <td><span class="pill ${a.role === 'Manager' ? 'accent' : 'plain'}">${a.role}</span></td>
                     <td class="nowrap">${a.group}</td>
                     <td>${a.shift}</td>
                     <td>${a.location}</td>
@@ -69,7 +69,7 @@
         body: html`<div class="form-grid">
           <label class="field"><span>Full name</span><input id="nm-name" class="in" value="${m.name}" data-input="team.m" data-f="name"></label>
           <label class="field"><span>SOEID <span class="hint">2 letters + 5 digits</span></span><input id="nm-soeid" class="in mono" value="${m.soeid}" data-input="team.m" data-f="soeid" placeholder="AB12345"></label>
-          <label class="field"><span>Access role</span><select id="nm-role" class="in" data-change="team.m" data-f="role">${['Analyst', 'Team Lead'].map((g) => opt(g, m.role))}</select></label>
+          <label class="field"><span>Access role</span><select id="nm-role" class="in" data-change="team.m" data-f="role">${['Analyst', 'Manager'].map((g) => opt(g, m.role))}</select></label>
           <label class="field"><span>Assignment group</span><select id="nm-group" class="in" data-change="team.m" data-f="group">${['Service Desk L2', 'Apps Support', 'Infra Ops'].map((g) => opt(g, m.group))}</select></label>
           <label class="field"><span>Default shift</span><select id="nm-shift" class="in" data-change="team.m" data-f="shift">${['Early', 'Mid', 'Late'].map((g) => opt(g, m.shift))}</select></label>
           <label class="field"><span>Base location</span><select id="nm-loc" class="in" data-change="team.m" data-f="location">${['WFH', 'Onsite'].map((g) => opt(g, m.location))}</select></label>
@@ -293,7 +293,7 @@
 
       ${lead && html`
         <section class="card">
-          <div class="card-h"><h3>Team vault compliance</h3><span class="muted small">Counts only. Team leads never see analysts' passwords.</span></div>
+          <div class="card-h"><h3>Team vault compliance</h3><span class="muted small">Counts only. Managers never see analysts' passwords.</span></div>
           <div class="tbl-wrap">
             <table class="tbl">
               <thead><tr><th>Analyst</th><th class="r">Credentials</th><th class="r">Expiring soon</th><th class="r">Expired</th><th class="r">Weak</th><th></th></tr></thead>

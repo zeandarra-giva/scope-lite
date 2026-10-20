@@ -85,7 +85,7 @@
     const insights = computeInsights(state)
 
     if (!canUseCopilot(state)) {
-      return html`<div class="callout warn">${icon('lock', 16)}<span><b>Copilot is turned off for analysts.</b> Your team lead controls this in Copilot settings.</span></div>`
+      return html`<div class="callout warn">${icon('lock', 16)}<span><b>Copilot is turned off for analysts.</b> Your manager controls this in Copilot settings.</span></div>`
     }
 
     return html`
@@ -292,7 +292,7 @@
       <ol style="margin:0;padding-left:18px" class="stack">
         <li><b>Scope gathers the context:</b> your role, the ticket you attached, and the settings on the Configure tab.</li>
         <li><b>The model</b> (${modelLabel(cfg.model)}, through the approved AI gateway) reads the question and decides which tools to call: <span class="mono">search_knowledge_base</span>, <span class="mono">query_data</span>, <span class="mono">get_queue</span>, <span class="mono">get_metrics</span>.</li>
-        <li><b>Every tool call goes through Scope's API</b> with your permissions. Copilot never writes to ServiceNow. Fixes go to a team lead and drafts are copied by you.</li>
+        <li><b>Every tool call goes through Scope's API</b> with your permissions. Copilot never writes to ServiceNow. Fixes go to a manager and drafts are copied by you.</li>
         <li><b>Search is retrieval:</b> when a page is published it's split into chunks and indexed. Only the matching passages from linked, published pages reach the model.</li>
         <li><b>Before the answer is shown,</b> Scope applies the guardrails: sources attached, failed lookups reported as failures, numbers taken from live tools.</li>
       </ol>
@@ -374,7 +374,7 @@
     const state = S.state
     const cfg = state.copilot.config
     const misses = state.copilot.misses
-    if (!cfg.insights.enabled) return html`<div class="callout">${icon('info', 16)}<span>Automated insights are turned off. A team lead can turn them on in the Configure tab.</span></div>`
+    if (!cfg.insights.enabled) return html`<div class="callout">${icon('info', 16)}<span>Automated insights are turned off. A manager can turn them on in the Configure tab.</span></div>`
     return html`
       <section class="card">
         <div class="card-h"><h3>Automated insights</h3><span class="muted small">from ticket history, the live queue and the knowledge base · refreshed every sync</span></div>
@@ -446,7 +446,7 @@
     const model = MODELS.find((m) => m.id === cfg.model)
     const check = (on, action, v, extra = {}) => html`<input type="checkbox" ${attrs({ checked: !!on, ...extra })} data-change="${action}" data-v="${v}">`
     return html`
-      ${!lead && html`<div class="callout">${icon('lock', 16)}<span>Only team leads can change Copilot settings. You can see how it's set up.</span></div>`}
+      ${!lead && html`<div class="callout">${icon('lock', 16)}<span>Only managers can change Copilot settings. You can see how it's set up.</span></div>`}
       ${lead && html`<div class="callout small">${icon('check', 16)}<span>Changes save as you make them and apply to the next answer.</span></div>`}
       <fieldset class="grid g-2 cfg" ${attrs({ disabled: !lead })}>
         <div class="card">
@@ -515,9 +515,9 @@
           <div class="card-h"><h3>Access</h3></div>
           <div class="card-b stack lg">
             <label class="check">${check(cfg.access.analysts, 'cp.access', '')}
-              <span class="stack" style="gap:0"><b>Analysts can use Copilot</b><span class="muted small">Team leads always can. Only team leads change these settings.</span></span>
+              <span class="stack" style="gap:0"><b>Analysts can use Copilot</b><span class="muted small">Managers always can. Only managers change these settings.</span></span>
             </label>
-            <span class="small ink2">Copilot sees what the person asking can see: analysts get their own queue, team leads the whole team.</span>
+            <span class="small ink2">Copilot sees what the person asking can see: analysts get their own queue, managers the whole team.</span>
           </div>
         </div>
       </fieldset>`

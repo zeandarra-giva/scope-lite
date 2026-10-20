@@ -21,7 +21,7 @@ const between = (a, b) => a + rand() * (b - a)
 
 // ---------- People ----------
 const ANALYSTS = [
-  { id: 'a1', name: 'Andrea Santos', soeid: 'AS40211', role: 'Team Lead', group: 'Service Desk L2', location: 'Onsite', shift: 'Early', status: 'online', skills: ['Escalations', 'Major incidents'] },
+  { id: 'a1', name: 'Andrea Santos', soeid: 'AS40211', role: 'Manager', group: 'Service Desk L2', location: 'Onsite', shift: 'Early', status: 'online', skills: ['Escalations', 'Major incidents'] },
   { id: 'a2', name: 'Paolo Reyes', soeid: 'PR38817', role: 'Analyst', group: 'Service Desk L2', location: 'WFH', shift: 'Early', status: 'online', skills: ['Network', 'VPN'] },
   { id: 'a3', name: 'Bea Mendoza', soeid: 'BM51024', role: 'Analyst', group: 'Service Desk L2', location: 'Onsite', shift: 'Early', status: 'online', skills: ['Identity', 'Okta'] },
   { id: 'a4', name: 'Carlo Dizon', soeid: 'CD27390', role: 'Analyst', group: 'Apps Support', location: 'WFH', shift: 'Mid', status: 'online', skills: ['SAP', 'Payments'] },
@@ -410,7 +410,7 @@ function seedSchedule() {
 
 // ---------- Calendar ----------
 // The 14 seeded days live in schedule.sched. Any other date is generated from
-// the same rota pattern, plus edits a team lead made in the calendar.
+// the same rota pattern, plus edits a manager made in the calendar.
 const mod = (n, m) => ((n % m) + m) % m
 const PH_HOLIDAYS = ['2026-11-02', '2026-11-30', '2026-12-08', '2026-12-24', '2026-12-25', '2026-12-30', '2026-12-31', '2027-01-01']
 const startOfDay = (ts) => { const d = new Date(ts); d.setHours(0, 0, 0, 0); return d.getTime() }

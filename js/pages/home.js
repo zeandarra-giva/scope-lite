@@ -340,7 +340,7 @@
             </tr>`)}
         </tbody>
       </table>
-      <div class="small muted" style="padding:12px">Automated fixes come from resolution codes marked automatable. Nothing runs until a team lead approves it.</div>
+      <div class="small muted" style="padding:12px">Automated fixes come from resolution codes marked automatable. Nothing runs until a manager approves it.</div>
     </div>`
   }
 

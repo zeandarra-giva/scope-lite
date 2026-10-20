@@ -170,7 +170,8 @@
     const missing = !f.kind ? 'Pick what kind of suggestion this is.' : !f.title.trim() ? 'Give it a short title.' : null
     S.modal({
       title: 'Make a suggestion',
-      sub: sugg.online ? 'Everyone on this Scope Lite server will see it.' : 'Saved in this browser. Export it from the Suggestions page to share.',
+      sub: sugg.online ? (S.isManager(S.state) ? 'Everyone on this Scope Lite server will see it.' : 'Your manager will see it on the Suggestions board.')
+        : S.isManager(S.state) ? 'Saved in this browser. Export it from the Suggestions page to share.' : 'The Scope Lite server isn\'t running, so this is saved in this browser only.',
       onClose: 'sugg.close',
       body: html`<form class="stack sugg-form" style="gap:14px" data-submit="sugg.submit" id="sugg-form">
         <div class="stack" style="gap:6px">

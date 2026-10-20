@@ -138,7 +138,7 @@ function reducer(state, a) {
       return toast({
         ...state,
         approvals: [{ id, ticket: a.ticket, code: a.code, fix: a.fix, by: a.by, at: Date.now(), status: 'Pending' }, ...state.approvals],
-      }, `Automated fix ${id} sent to the team lead for approval`)
+      }, `Automated fix ${id} sent to the manager for approval`)
     }
     case 'decideFix':
       return toast({ ...state, approvals: state.approvals.map((x) => (x.id === a.id ? { ...x, status: a.status } : x)) }, `${a.id} ${a.status.toLowerCase()}`)
@@ -198,7 +198,7 @@ function reducer(state, a) {
     case 'kbDiscard':
       return toast(mapPage(state, a.id, (p) => ({ ...p, draft: { title: p.live.title, body: p.live.body, attachments: p.live.attachments } })), 'Draft discarded. Back to the published version')
     case 'kbReview':
-      return toast(mapPage(state, a.id, (p) => ({ ...p, review: { by: a.by, at: Date.now() } })), 'Review requested from the team lead')
+      return toast(mapPage(state, a.id, (p) => ({ ...p, review: { by: a.by, at: Date.now() } })), 'Review requested from the manager')
     case 'kbPublish':
       return mapPage(state, a.id, (p) => ({ ...p, index: 'indexing', indexError: null, publishing: a.by }))
     case 'kbIndexed': {

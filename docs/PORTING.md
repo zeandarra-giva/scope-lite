@@ -17,4 +17,4 @@ Source: `../goated-sc-project/src` (read-only reference). Target: this repo.
 
 Callbacks that were props (`onOpen`, `onResolve`, `onClose`, `onAsk`) become **action names** (strings) registered with `S.on`, plus any `data-*` values the callee puts on the element.
 
-Already done: `App.jsx` and `SignIn.jsx` and `DevTools.jsx` → `js/app.js`; `ui.jsx` and `Doc.jsx` → `js/components/ui.js`; `store.jsx` → `js/store.js`; `data.js`, `kb.js`, `analytics.js`, `copilot.js`, `workspaces.js` → `js/data/`.
+Already done: `App.jsx` and `SignIn.jsx` and `DevTools.jsx` → `js/app.js`; `ui.jsx` and `Doc.jsx` → `js/components/ui.js`; `store.jsx` → `js/store.js`; `data.js`, `kb.js`, `analytics.js`, `copilot.js`, `workspaces.js` → `js/data/

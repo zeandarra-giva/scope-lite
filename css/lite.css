@@ -1,0 +1,72 @@
+/* Scope Lite additions on top of styles.css (which is copied unchanged from
+   the React prototype). Uses the same tokens; nothing here redefines them. */
+
+/* Sidebar "Suggest" button: one click from every page */
+.rail-suggest { display: flex; align-items: center; gap: 10px; margin: 0 0 10px; padding: 10px 12px; border-radius: 16px; border: 1.2px dashed rgba(255, 255, 255, .22); background: rgba(124, 192, 242, .08); color: var(--rail-text); text-align: left; cursor: pointer; font: inherit; }
+.rail-suggest:hover { background: var(--rail-hover); border-color: var(--rail-hi); }
+.rail-suggest:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+.rail-suggest b { font-size: 13.5px; font-weight: 500; color: var(--rail-title); }
+.rail-suggest .stack span { font-size: 11.5px; color: var(--rail-ink); }
+.rail-suggest-ic { width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; background: var(--rail-hi); color: var(--rail-hi-ink); flex: none; }
+@media (max-width: 900px) {
+  .rail-suggest { margin: 0; padding: 4px 10px 4px 4px; flex: none; order: 1; }
+  .rail-suggest .stack span { display: none; }
+  .rail-suggest-ic { width: 28px; height: 28px; }
+}
+.nav-count.sugg-count { background: var(--accent); color: var(--accent-ink); }
+.overlay-layer { display: contents; }
+
+/* Kind tags */
+.sugg-kind { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 2px 10px 2px 8px; font-size: 12px; font-weight: 500; white-space: nowrap; }
+.sugg-kind.blue { background: var(--tag-blue); color: var(--tag-blue-ink); }
+.sugg-kind.red { background: var(--tag-red); color: var(--tag-red-ink); }
+.sugg-kind.green { background: var(--tag-green); color: var(--tag-green-ink); }
+
+/* Suggest modal */
+.field-label { font-size: 12.5px; font-weight: 500; color: var(--ink-2); }
+.sugg-kinds { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+@media (max-width: 560px) { .sugg-kinds { grid-template-columns: 1fr; } }
+.sugg-kind-btn { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; text-align: left; padding: 14px; border-radius: 18px; border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--ink); cursor: pointer; font: inherit; }
+.sugg-kind-btn:hover { background: var(--hover); }
+.sugg-kind-btn:focus-visible { outline: none; box-shadow: 0 0 0 3px var(--focus-ring); }
+.sugg-kind-ic { width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center; margin-bottom: 4px; }
+.sugg-kind-btn.blue .sugg-kind-ic { background: var(--tag-blue); color: var(--tag-blue-ink); }
+.sugg-kind-btn.red .sugg-kind-ic { background: var(--tag-red); color: var(--tag-red-ink); }
+.sugg-kind-btn.green .sugg-kind-ic { background: var(--tag-green); color: var(--tag-green-ink); }
+.sugg-kind-btn.on { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus-ring); background: var(--row-sel); }
+.sugg-form textarea.in { resize: vertical; min-height: 96px; font: inherit; }
+
+/* Dashboard */
+.sugg-conn { margin-bottom: 16px; align-items: center; }
+.sugg-kpis { margin-bottom: 16px; }
+.sugg-toolbar { gap: 10px; }
+.sugg-search { width: 280px; max-width: 100%; }
+.sugg-select { height: 38px; width: auto; padding-right: 30px; }
+.sugg-list { display: flex; flex-direction: column; }
+.sugg-row { display: flex; gap: 14px; align-items: flex-start; padding: 14px 20px; border-top: 1px solid var(--line); }
+.sugg-row:first-child { border-top: 0; }
+.sugg-row:hover, .sugg-row.sel { background: var(--row-hover); }
+.sugg-row.sel { background: var(--row-sel); }
+.sugg-vote { flex: none; display: flex; flex-direction: column; align-items: center; gap: 2px; width: 52px; padding: 8px 0; border-radius: 14px; border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--ink-2); cursor: pointer; font: inherit; }
+.sugg-vote:hover { border-color: var(--accent); color: var(--accent); }
+.sugg-vote.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.sugg-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; text-align: left; border: 0; background: none; padding: 0; color: var(--ink); cursor: pointer; font: inherit; }
+.sugg-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.sugg-snip { font-size: 13px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
+.sugg-main .muted svg { vertical-align: -2px; }
+.sugg-empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 48px 24px; }
+.sugg-empty-ic { width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: var(--tag-blue); color: var(--tag-blue-ink); }
+.card-f { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 12px 20px; border-top: 1px solid var(--line); }
+.sugg-details { white-space: pre-wrap; font-size: 14px; line-height: 1.55; background: var(--surface); border-radius: 14px; padding: 14px 16px; }
+.sugg-timeline { display: flex; flex-direction: column; gap: 12px; }
+.sugg-ev { display: flex; gap: 10px; align-items: flex-start; }
+.sugg-ev.is-comment .sugg-comment { display: block; margin-top: 4px; white-space: pre-wrap; background: var(--surface); border-radius: 12px; padding: 8px 12px; }
+@media (max-width: 640px) {
+  .sugg-row { padding: 12px 14px; gap: 10px; }
+  .sugg-vote { width: 44px; }
+  .sugg-search { width: 100%; }
+}
+.date-chip { white-space: nowrap; }
+
+/* kb: the page body editor keeps its full height (textarea.in would shrink it) */
+textarea.kb-body-in { min-height: 320px; }

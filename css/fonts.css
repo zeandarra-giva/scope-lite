@@ -1,0 +1,10 @@
+/* Bundled fonts (Geist and Geist Mono, SIL Open Font License, via @fontsource).
+   Latin subset, only the weights in use, WOFF2 only, so the app needs no
+   network access to a font service. */
+@font-face { font-family: 'Geist'; font-style: normal; font-display: swap; font-weight: 400; src: url('../fonts/geist-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-display: swap; font-weight: 500; src: url('../fonts/geist-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-display: swap; font-weight: 600; src: url('../fonts/geist-latin-600-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist'; font-style: normal; font-display: swap; font-weight: 700; src: url('../fonts/geist-latin-700-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-display: swap; font-weight: 400; src: url('../fonts/geist-mono-latin-400-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-display: swap; font-weight: 500; src: url('../fonts/geist-mono-latin-500-normal.woff2') format('woff2'); }
+@font-face { font-family: 'Geist Mono'; font-style: normal; font-display: swap; font-weight: 600; src: url('../fonts/geist-mono-latin-600-normal.woff2') format('woff2'); }

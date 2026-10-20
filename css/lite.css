@@ -70,3 +70,25 @@
 
 /* kb: the page body editor keeps its full height (textarea.in would shrink it) */
 textarea.kb-body-in { min-height: 320px; }
+
+/* reports: Compare & generate */
+.cmp-sides { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 900px) { .cmp-sides { grid-template-columns: minmax(0, 1fr); } }
+.cmp-side { box-shadow: inset 0 4px 0 var(--side); }
+.cmp-dot { width: 10px; height: 10px; border-radius: 3px; display: inline-block; flex: none; }
+.cmp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 12px; }
+.pill-x { border: 0; background: none; padding: 0; margin-left: 2px; color: inherit; cursor: pointer; display: inline-flex; opacity: .7; }
+.pill-x:hover { opacity: 1; }
+.pbars { display: flex; flex-direction: column; gap: 10px; }
+.pbar { display: grid; grid-template-columns: minmax(90px, 1.1fr) minmax(80px, 2fr) 60px 76px; gap: 10px; align-items: center; font-size: 13px; }
+.pbar[data-click] { cursor: pointer; }
+.pbar[data-click]:hover .pbar-l { text-decoration: underline; }
+.pbar-l { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pbar-tracks { display: flex; flex-direction: column; gap: 3px; }
+.pbar-tracks .hbar-track { height: 7px; }
+.pbar-v { display: flex; flex-direction: column; align-items: flex-end; line-height: 1.2; font-size: 12.5px; }
+.pbar .pill { justify-content: center; }
+@media (max-width: 560px) {
+  .pbar { grid-template-columns: minmax(0, 1fr) auto auto; }
+  .pbar-tracks { grid-column: 1 / -1; order: 3; }
+}

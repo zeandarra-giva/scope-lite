@@ -57,9 +57,22 @@ const defaultCopilot = () => ({
   access: { analysts: true },
 })
 
+// Conversation starters for an empty chat: live, how-to and writing questions.
+// Report-style questions (rankings, trends, breakdowns) live in the prompt
+// templates beside the chat, where the numbers and windows can be changed.
 const SUGGESTIONS = {
-  lead: ['Which tickets are at risk right now?', 'Why is Payments Hub slow to resolve?', 'Draft my shift handover', 'Who is online and how loaded are they?', 'What is the P2 SLA?', 'Top 5 root causes this quarter'],
-  analyst: ['Which of my tickets are at risk?', 'How do I fix VPN disconnects?', 'Who do I escalate Payments Hub issues to?', 'What is the P2 SLA?', 'How do I share a calendar with a delegate?', 'Draft my shift handover'],
+  lead: [
+    { icon: 'clock', text: 'Which tickets are at risk right now?' },
+    { icon: 'bolt', text: 'Why is Payments Hub slow to resolve?' },
+    { icon: 'team', text: 'Who is online and how loaded are they?' },
+    { icon: 'edit', text: 'Draft my shift handover' },
+  ],
+  analyst: [
+    { icon: 'clock', text: 'Which of my tickets are at risk?' },
+    { icon: 'book', text: 'How do I fix VPN disconnects?' },
+    { icon: 'phone', text: 'Who do I escalate Payments Hub issues to?' },
+    { icon: 'edit', text: 'Draft my shift handover' },
+  ],
 }
 
 // ---------- Answer builder ----------

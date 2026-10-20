@@ -3,7 +3,7 @@
 ;(function () {
   const {
     ANALYSTS, DAY, HOUR, NOW, PRIORITIES, RESOLUTION_CODES, byId, codeInfo, makeQueueTicket, pickAssignee,
-    dayIndex, dayKey, fmtDur, resolutionDetails, seedHandovers, seedHistory, seedQueue, seedSchedule, seedVault, slaInfo,
+    dayIndex, dayKey, fmtDur, resolutionDetails, seedArchive, seedHandovers, seedHistory, seedQueue, seedSchedule, seedVault, slaInfo,
     indexProblem, seedKb, defaultCopilot,
   } = S
 
@@ -15,6 +15,7 @@ function init() {
     tickets,
     stats,
     history: seedHistory(),
+    archive: seedArchive(),
     handovers: seedHandovers(),
     schedule: seedSchedule(),
     vault: seedVault(),

@@ -104,14 +104,7 @@
   load()
 
   // ---------- Export / import ----------
-  function download(name, text, type) {
-    const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([text], { type }))
-    a.download = name
-    document.body.appendChild(a)
-    a.click()
-    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove() }, 500)
-  }
+  const download = S.download
   const stamp = () => new Date().toISOString().slice(0, 10)
   const csvCell = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`
   function exportCsv() {

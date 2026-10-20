@@ -2,7 +2,7 @@
 (function () {
   const { DAY, RES_GOAL_H, ROOT_CAUSES, avg, byId, fmtDate, fmtH } = S
 // Deterministic analytics over resolved-ticket history. Shared by Reports
-// (charts, Explorer, Template Search) and Copilot (metric answers, insights).
+// (charts, Explorer) and Copilot (metric answers, insights, prompt templates).
 
 const DIMENSIONS = {
   channel: { label: 'Channel', get: (h) => h.channel },
@@ -43,7 +43,54 @@ function aggregate(rows, dim, measure) {
 const inWindow = (rows, now, days, prio) => rows.filter((h) => h.resolvedAt >= now - days * DAY && (!prio || prio === 'All' || h.priority === prio))
 const qaScore = (h) => (['documentation', 'contactLogged', 'correctCode', 'validated'].filter((k) => h.qa[k]).length + (h.slaMet ? 1 : 0)) * 20
 
-// ---------- Template Search (Tier 2): keyword → deterministic query template ----------
+// ---------- Periods (Compare & generate) ----------
+// A period is a kind plus an id: window '30' or 'p30' (the 30 days before
+// that), year '2026', quarter '2026-Q4', month '2026-10'. Ranges are
+// [from, to) in ms; a period still running ends at now and is marked partial.
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+const PERIOD_KINDS = [{ id: 'window', label: 'Window' }, { id: 'year', label: 'Year' }, { id: 'quarter', label: 'Quarter' }, { id: 'month', label: 'Month' }]
+const WINDOWS = [['7', 'Last 7 days'], ['p7', 'Prior 7 days'], ['30', 'Last 30 days'], ['p30', 'Prior 30 days'], ['90', 'Last 90 days'], ['p90', 'Prior 90 days'], ['365', 'Last 12 months'], ['p365', 'Prior 12 months'], ['all', 'All time']]
+// first: the oldest record's timestamp, so the lists stop where the data does.
+function periodOptions(kind, now, first) {
+  if (kind === 'window') return WINDOWS.map(([id, label]) => ({ id, label }))
+  const out = []
+  const end = new Date(now), d = new Date(first)
+  if (kind === 'year') for (let y = end.getFullYear(); y >= d.getFullYear(); y--) out.push({ id: String(y), label: String(y) })
+  if (kind === 'quarter') {
+    for (let y = end.getFullYear(), q = Math.floor(end.getMonth() / 3); y > d.getFullYear() || (y === d.getFullYear() && q >= Math.floor(d.getMonth() / 3)); q--) {
+      if (q < 0) { q = 3; y-- }
+      out.push({ id: `${y}-Q${q + 1}`, label: `Q${q + 1} ${y}` })
+    }
+  }
+  if (kind === 'month') {
+    for (let y = end.getFullYear(), m = end.getMonth(); y > d.getFullYear() || (y === d.getFullYear() && m >= d.getMonth()); m--) {
+      if (m < 0) { m = 11; y-- }
+      out.push({ id: `${y}-${String(m + 1).padStart(2, '0')}`, label: `${MONTH_NAMES[m]} ${y}` })
+    }
+  }
+  return out
+}
+function periodRange(kind, id, now, first) {
+  let from, to, label
+  if (kind === 'window') {
+    const days = id === 'all' ? null : Number(id.replace('p', ''))
+    label = (WINDOWS.find((w) => w[0] === id) || [])[1] || id
+    if (days == null) { from = first; to = now }
+    else if (id[0] === 'p') { from = now - 2 * days * DAY; to = now - days * DAY }
+    else { from = now - days * DAY; to = now }
+    return { from, to, label, partial: null }
+  }
+  const [y, rest] = id.split('-')
+  if (kind === 'year') { from = new Date(+y, 0, 1); to = new Date(+y + 1, 0, 1); label = y }
+  if (kind === 'quarter') { const q = +rest.slice(1) - 1; from = new Date(+y, q * 3, 1); to = new Date(+y, q * 3 + 3, 1); label = `Q${q + 1} ${y}` }
+  if (kind === 'month') { const m = +rest - 1; from = new Date(+y, m, 1); to = new Date(+y, m + 1, 1); label = `${MONTH_NAMES[m]} ${y}` }
+  from = from.getTime(); to = to.getTime()
+  // How much of a running period has passed, so volume comparisons can be read fairly.
+  const partial = now < to && now > from ? (now - from) / (to - from) : null
+  return { from, to: Math.min(to, now), label: partial ? `${label} (to date)` : label, partial }
+}
+
+// ---------- Template Search (Copilot prompt templates): keyword → deterministic query template ----------
 const DIM_WORDS = [
   [/channel|phone|chat|email|portal/, 'channel'], [/\bapps?\b|application|system/, 'businessApp'], [/product/, 'productGroup'],
   [/group|team|queue/, 'assignmentGroup'], [/analyst|who|person|people|agent/, 'analyst'], [/root cause|cause|why/, 'cause'],
@@ -76,5 +123,5 @@ function parseQuery(text) {
   return { tpl, measure, dim, days: Math.min(90, days), prio: prio ? `P${prio}` : 'All', topN, asc }
 }
 
-  Object.assign(S, { DIMENSIONS, MEASURES, aggregate, inWindow, qaScore, TEMPLATES, parseQuery })
+  Object.assign(S, { DIMENSIONS, MEASURES, aggregate, inWindow, qaScore, MONTH_NAMES, PERIOD_KINDS, periodOptions, periodRange, TEMPLATES, parseQuery })
 })()

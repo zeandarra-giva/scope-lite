@@ -47,6 +47,7 @@ const PATHS = {
   folder: 'M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z',
   send: 'M4 12L20 4l-5 16-3-7zm8 1l8-9',
   upload: 'M12 15V4m-5 5l5-5 5 5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4',
+  download: 'M12 4v11m-5-5l5 5 5-5M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4',
   edit: 'M4 20h4L19 9l-4-4L4 16zm9-13l4 4',
   table: 'M4 5h16v14H4zM4 10h16M4 15h16M10 5v14',
   trash: 'M4 7h16M9 7V4h6v3m-8 0l1 13h8l1-13',
@@ -285,6 +286,16 @@ const FILLED = {
       </div>`)}</div>`
   }
 
+  // Hands the browser a file to save (exports from Reports and Suggestions).
+  function download(name, text, type) {
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(new Blob([text], { type }))
+    a.download = name
+    document.body.appendChild(a)
+    a.click()
+    setTimeout(() => { URL.revokeObjectURL(a.href); a.remove() }, 500)
+  }
+
   async function copyText(text) {
     try {
       await navigator.clipboard.writeText(text)
@@ -372,5 +383,5 @@ const FILLED = {
     'ui.drawerReset': (el) => { drawerW[el.dataset.dk] = null; S.storage.set(el.dataset.dk, null); S.render() },
   })
 
-  Object.assign(S, { icon, modal, drawer, tabs, seg, infoTip, kpiShell, kpi, slaPill, prio, toasts, ring, lineChart, barChart, hBars, copyText, inline, docText, niceMax, fmtTick })
+  Object.assign(S, { icon, modal, drawer, tabs, seg, infoTip, kpiShell, kpi, slaPill, prio, toasts, ring, lineChart, barChart, hBars, download, copyText, inline, docText, niceMax, fmtTick })
 })()

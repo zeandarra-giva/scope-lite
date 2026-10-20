@@ -56,7 +56,7 @@
   // carry { ticket }, { insight }, { thread } or { tab }).
   const page = () => S.ui('p:copilot', () => {
     const route = S.route
-    const u = { tab: route.tab || 'ask', active: route.thread || (S.state.copilot.threads[0] || {}).id || null }
+    const u = { tab: route.tab || 'ask', side: 'chats', active: route.thread || (S.state.copilot.threads[0] || {}).id || null }
     if (route.ticket || route.insight) {
       const id = 'th-' + route.key
       startThread(id, { ticketId: route.ticket, insight: route.insight })
@@ -95,31 +95,28 @@
         { id: 'settings', label: 'Configure', icon: 'gear' },
       ], tab, 'cp.tab')}
       ${tab === 'ask' && html`
-        <section class="grid g-3-1">
-          <div class="card cp-card">
-            <div class="card-h">
+        <section class="card cp-shell">
+          <aside class="cp-side" aria-label="Copilot side panel">
+            <div class="cp-side-h">
+              ${S.tabs([
+                { id: 'chats', label: 'Chats', icon: 'msg' },
+                { id: 'templates', label: 'Templates', icon: 'chart' },
+              ], u.side, 'cp.side')}
+              <button class="btn sm cp-new" data-click="cp.new" title="Start a new conversation">${icon('plus', 14)}New chat</button>
+            </div>
+            <div class="cp-side-b" id="cp-side-b">
+              ${u.side === 'chats' && threadList(active)}
+              ${u.side === 'templates' && templatesList()}
+            </div>
+          </aside>
+          <div class="cp-main">
+            <div class="cp-main-h">
               <h3>${cfg.name}</h3>
               <span class="pill accent">${icon('spark', 12)}${modelLabel(cfg.model)}</span>
               <span class="spacer"></span>
-              <button class="btn sm" data-click="cp.new">${icon('plus', 14)}New chat</button>
               ${howItWorks()}
             </div>
             ${copilotChat({ threadId: active, onNeedThread: () => newThread(), scope: 'page' })}
-          </div>
-          <div class="stack lg">
-            ${contextCard(active)}
-            ${threadList(active)}
-            ${cfg.insights.enabled && insights.length > 0 && html`
-              <div class="card">
-                <div class="card-h"><h3>Top insights</h3><span class="spacer"></span><button class="btn ghost sm" data-click="cp.tab" data-v="insights">See all</button></div>
-                <div class="card-b stack">
-                  ${sortedInsights(insights).slice(0, 3).map((ins) => html`
-                    <button class="cp-thread" data-key="${ins.id}" data-click="cp.askInsight" data-v="${ins.id}">
-                      <span class="ins-ic sm ${ins.tone}">${icon(ins.icon, 14)}</span>
-                      <span class="stack" style="gap:0;min-width:0"><b class="small">${ins.title}</b><span class="muted small">Ask about this</span></span>
-                    </button>`)}
-                </div>
-              </div>`}
           </div>
         </section>`}
       ${tab === 'insights' && insightsTab(insights)}
@@ -143,7 +140,12 @@
     const busy = !!thread && thread.messages.some((m) => m.pending)
     const ctx = (thread && thread.ctx) || {}
     const ticket = ctx.ticketId && (state.tickets.find((t) => t.id === ctx.ticketId) || state.history.find((h) => h.id === ctx.ticketId))
-    const suggestions = ctx.ticketId ? [`How do I resolve ${ctx.ticketId}?`, 'Draft a customer update', 'What if the fix doesn\'t work?', 'Show similar incidents'] : SUGGESTIONS[state.role]
+    const suggestions = ctx.ticketId ? [
+      { icon: 'wrench', text: `How do I resolve ${ctx.ticketId}?` },
+      { icon: 'edit', text: 'Draft a customer update' },
+      { icon: 'alert', text: 'What if the fix doesn\'t work?' },
+      { icon: 'search', text: 'Show similar incidents' },
+    ] : SUGGESTIONS[state.role]
     const qid = `cp-q-${threadId || 'new'}`
 
     return html`
@@ -154,9 +156,11 @@
               <span class="cp-av lg">${icon('spark', 22)}</span>
               <h3>What are you working on?</h3>
               <p class="muted small">Ask about a ticket, a runbook, the queue or a report. Answers come from published knowledge base pages and live Scope data, with sources.</p>
-              <div class="row" style="justify-content:center">
-                ${suggestions.map((s) => html`<button class="btn sm" data-click="cp.suggest" data-scope="${scope}" data-v="${s}">${s}</button>`)}
+              <div class="cp-starters">
+                ${suggestions.map((s) => html`<button class="cp-starter" data-click="cp.suggest" data-scope="${scope}" data-v="${s.text}">${icon(s.icon, 15)}<span>${s.text}</span></button>`)}
               </div>
+              ${scope === 'page' && !ctx.ticketId && html`
+                <button class="btn ghost sm cp-follow" data-click="cp.tplFocus">${icon('chart', 14)}Need numbers? Use a prompt template</button>`}
             </div>`}
           ${thread && thread.messages.map((m) => m.role === 'user'
             ? html`<div class="cp-user" data-key="${m.id}">${m.text}</div>`
@@ -165,7 +169,6 @@
         <form class="cp-compose" data-submit="cp.send" data-scope="${scope}">
           ${(ticket || ctx.insight) && html`
             <div class="row tight">
-              <span class="muted small">Context</span>
               <span class="pill plain">
                 ${icon(ticket ? 'clip' : 'bolt', 12)}
                 ${ticket ? `${ticket.id} · ${ticket.desc.slice(0, 40)}${ticket.desc.length > 40 ? '…' : ''}` : ctx.insight.title}
@@ -173,12 +176,13 @@
               </span>
             </div>`}
           <div class="cp-input">
+            ${scope === 'page' && !ticket && !ctx.insight && ticketPicker(threadId)}
             <label class="sr-only" for="${qid}">Ask Copilot</label>
             <textarea id="${qid}" class="in" rows="1" placeholder="${ticket ? `Ask about ${ticket.id}…` : 'Ask about a ticket, runbook, the queue or a metric…'}"
               data-input="cp.text" data-keydown="cp.key" data-scope="${scope}">${c.text}</textarea>
             <button class="icon-btn cp-send" type="submit" ${attrs({ disabled: !c.text.trim() || busy })} aria-label="Send">${icon('send', 17)}</button>
           </div>
-          <span class="muted small">${modelLabel(cfg.model)} · searches ${cfg.kbIds.length} knowledge base${cfg.kbIds.length === 1 ? '' : 's'} · proposes, never acts. Prototype: answers are composed in your browser.</span>
+          <span class="muted small cp-meta">${modelLabel(cfg.model)} · searches ${cfg.kbIds.length} knowledge base${cfg.kbIds.length === 1 ? '' : 's'} · proposes, never acts. Prototype: answers are composed in your browser.</span>
         </form>
       </div>`
   }
@@ -299,42 +303,31 @@
       <div class="callout small">${icon('shield', 16)}<span><b>Prototype:</b> answers are composed in your browser by rules that follow the same steps. No data leaves the machine.</span></div>`)
   }
 
-  function contextCard(threadId) {
+  // Attach a ticket from the composer. Once attached it shows as the context
+  // pill above the input instead.
+  function ticketPicker(threadId) {
     const state = S.state
     const me = S.currentUser(state)
-    const thread = threadById(threadId)
-    const cur = (thread && thread.ctx && thread.ctx.ticketId) || ''
     const open = state.tickets.filter((t) => t.state !== 'Resolved')
     const mine = open.filter((t) => t.assignedTo === me.id)
     const others = open.filter((t) => t.assignedTo !== me.id)
-    const t = open.find((x) => x.id === cur)
-    const sla = t && slaInfo(t, state.now)
-    const opt = (x) => html`<option value="${x.id}" ${attrs({ selected: x.id === cur })}>${x.id} · ${x.priority} · ${x.desc.slice(0, 38)}</option>`
+    const opt = (x) => html`<option value="${x.id}">${x.id} · ${x.priority} · ${x.desc.slice(0, 38)}</option>`
     return html`
-      <div class="card">
-        <div class="card-h"><h3>Ticket context</h3></div>
-        <div class="card-b stack">
-          <label class="field"><span>Attach a ticket to this conversation</span>
-            <select id="cp-ctx" class="in" data-change="cp.ctx" data-v="${threadId || ''}">
-              <option value="" ${attrs({ selected: !t })}>No ticket</option>
-              ${mine.length > 0 && html`<optgroup label="My work queue">${mine.map(opt)}</optgroup>`}
-              ${state.role === 'lead' && html`<optgroup label="Team queue">${others.map(opt)}</optgroup>`}
-            </select>
-          </label>
-          ${t
-            ? html`<div class="small ink2">${t.businessApp} · ${t.priority} · ${sla.status} · ${t.assignedTo ? byId[t.assignedTo].name : 'Unassigned'}</div>`
-            : html`<span class="muted small">With a ticket attached, Copilot reads its SLA, history and runbook for every question.</span>`}
-        </div>
-      </div>`
+      <label class="cp-attach" title="Attach a ticket: Copilot reads its SLA, history and runbook for every question">
+        ${icon('clip', 16)}<span class="cp-attach-t">Ticket</span>
+        <select id="cp-ctx" data-change="cp.ctx" data-v="${threadId || ''}" aria-label="Attach a ticket to this conversation">
+          <option value="" selected>Attach a ticket</option>
+          ${mine.length > 0 && html`<optgroup label="My work queue">${mine.map(opt)}</optgroup>`}
+          ${state.role === 'lead' && html`<optgroup label="Team queue">${others.map(opt)}</optgroup>`}
+        </select>
+      </label>`
   }
 
   function threadList(active) {
     const threads = S.state.copilot.threads
     return html`
-      <div class="card">
-        <div class="card-h"><h3>Conversations</h3><span class="muted small">this session</span></div>
-        <div class="card-b stack" style="gap:2px">
-          ${!threads.length && html`<span class="muted small">Your conversations appear here.</span>`}
+      <div class="stack" style="gap:2px">
+          ${!threads.length && html`<span class="muted small cp-side-empty">Your conversations appear here.</span>`}
           ${threads.slice(0, 8).map((t) => html`
             <button class="cp-thread" data-key="${t.id}" ${attrs({ 'aria-current': t.id === active ? 'true' : null })} data-click="cp.pick" data-v="${t.id}">
               ${icon(t.ctx && t.ctx.ticketId ? 'clip' : t.ctx && t.ctx.insight ? 'bolt' : 'spark', 14)}
@@ -343,7 +336,56 @@
                 <span class="muted small">${t.messages.filter((m) => m.role === 'user').length} questions · ${fmtTime(t.at)}</span>
               </span>
             </button>`)}
-        </div>
+      </div>`
+  }
+
+  // ---------- Prompt templates ----------
+  // Template Search: fill-in-the-blank questions on the fixed query templates
+  // (TEMPLATES in analytics.js). Each one composes plain words that parseQuery
+  // reads back, so the same choices always give the same numbers.
+  const T_WINDOWS = ['this week', 'last 2 weeks', 'last 30 days', 'this quarter']
+  const T_PRIOS = ['all priorities', 'P1', 'P2', 'P3', 'P4']
+  const T_MEASURES = ['volume', 'MTTR', 'EZE MTTR', 'lost time', 'SLA attainment', 'FCR', 'transfer rate']
+  const T_RANK_DIMS = ['root causes', 'business apps', 'resolution codes', 'assignment groups', 'analysts', 'channels', 'product groups']
+  const T_DIMS = ['root cause', 'business app', 'resolution code', 'assignment group', 'analyst', 'channel', 'product group', 'priority']
+  const PROMPT_TEMPLATES = [
+    { id: 'rank', code: 'T-02', name: 'Top ranking', init: { n: 5, dim: 'root causes', measure: 'volume', window: 'this quarter' },
+      parts: ['Top ', { k: 'n', label: 'How many' }, ' ', { k: 'dim', label: 'Ranked by', opts: T_RANK_DIMS }, ' by ', { k: 'measure', label: 'Measure', opts: T_MEASURES }, ' ', { k: 'window', label: 'Window', opts: T_WINDOWS }] },
+    { id: 'trend', code: 'T-01', name: 'Trend over time', init: { measure: 'SLA attainment', prio: 'P1', window: 'this quarter' },
+      parts: [{ k: 'measure', label: 'Measure', opts: T_MEASURES }, ' trend for ', { k: 'prio', label: 'Priority', opts: T_PRIOS }, ' ', { k: 'window', label: 'Window', opts: T_WINDOWS }] },
+    { id: 'breakdown', code: 'T-03', name: 'Breakdown', init: { measure: 'FCR', dim: 'channel', window: 'last 30 days' },
+      parts: [{ k: 'measure', label: 'Measure', opts: T_MEASURES }, ' by ', { k: 'dim', label: 'Broken down by', opts: T_DIMS }, ' ', { k: 'window', label: 'Window', opts: T_WINDOWS }] },
+  ]
+  // Not page-local, so the values someone picked are still there next visit.
+  const tplUi = () => S.ui('cp:tpl', () => Object.fromEntries(PROMPT_TEMPLATES.map((t) => [t.id, { ...t.init }])))
+  const tplById = (id) => PROMPT_TEMPLATES.find((t) => t.id === id)
+  const topN = (v) => Math.max(1, Math.min(20, parseInt(v, 10) || 5))
+  const composeTpl = (t) => {
+    const v = tplUi()[t.id]
+    return t.parts.map((p) => (typeof p === 'string' ? p : p.k === 'n' ? topN(v.n) : v[p.k])).join('')
+  }
+
+  function templatesList() {
+    const u = tplUi()
+    const slot = (t, p) => {
+      if (typeof p === 'string') return p
+      const v = u[t.id][p.k]
+      const a = { 'aria-label': p.label, 'data-t': t.id, 'data-k': p.k }
+      if (!p.opts) return html`<input class="in cp-tpl-n" type="number" min="1" max="20" value="${v}" ${attrs(a)} data-input="cp.tplSet">`
+      return html`<select class="in sm" ${attrs(a)} data-change="cp.tplSet">${p.opts.map((o) => html`<option ${attrs({ selected: o === v })}>${o}</option>`)}</select>`
+    }
+    return html`
+      <div class="stack" id="cp-templates">
+          <p class="muted small" style="margin:0">Change the values, then <b>Ask</b>. Each template is a fixed query, so the same choices always give the same numbers. <b>Edit in chat</b> lets you reword it first.</p>
+          ${PROMPT_TEMPLATES.map((t) => html`
+            <div class="cp-tpl" data-key="${t.id}">
+              <div class="row tight"><span class="code-chip">${t.code}</span><span class="small ink2">${t.name}</span></div>
+              <p class="cp-tpl-q">${t.parts.map((p) => slot(t, p))}</p>
+              <div class="row tight">
+                <button class="btn primary sm" data-click="cp.tplAsk" data-v="${t.id}">${icon('send', 13)}Ask</button>
+                <button class="btn ghost sm" data-click="cp.tplEdit" data-v="${t.id}">${icon('edit', 13)}Edit in chat</button>
+              </div>
+            </div>`)}
       </div>`
   }
 
@@ -530,7 +572,8 @@
 
   S.on({
     'cp.tab': (el) => S.set(page(), { tab: el.dataset.v }),
-    'cp.new': () => newThread(),
+    'cp.new': () => { newThread(); S.set(page(), { side: 'chats' }) },
+    'cp.side': (el) => S.set(page(), { side: el.dataset.v }),
     'cp.pick': (el) => S.set(page(), { active: el.dataset.v }),
     'cp.askInsight': (el) => { const ins = insightById(el.dataset.v); if (ins) askInsight(ins) },
     'cp.ctx': (el) => {
@@ -542,6 +585,23 @@
     'cp.key': (el, ev) => { if (ev.key === 'Enter' && !ev.shiftKey) { ev.preventDefault(); chatUi(el.dataset.scope).text = el.value; send(el.dataset.scope) } },
     'cp.send': (el) => send(el.dataset.scope),
     'cp.suggest': (el) => send(el.dataset.scope, el.dataset.v),
+    // Prompt templates
+    'cp.tplSet': (el) => { const u = tplUi(); u[el.dataset.t] = { ...u[el.dataset.t], [el.dataset.k]: el.value }; if (el.tagName === 'SELECT') S.render() },
+    'cp.tplAsk': (el) => send('page', composeTpl(tplById(el.dataset.v))),
+    'cp.tplEdit': (el) => {
+      const text = composeTpl(tplById(el.dataset.v))
+      S.set(chatUi('page'), { text })
+      // The morph leaves a textarea's live value alone, so set it here.
+      const box = document.querySelector('.cp-compose[data-scope="page"] textarea')
+      if (box) { box.value = text; box.focus(); box.setSelectionRange(text.length, text.length) }
+    },
+    'cp.tplFocus': () => {
+      S.set(page(), { side: 'templates' })
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+      const first = document.querySelector('#cp-templates .cp-tpl-q input, #cp-templates .cp-tpl-q select')
+      if (first) { first.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); first.focus({ preventScroll: true }) }
+      }))
+    },
     'cp.rmCtx': (el) => S.dispatch({ type: 'copilotCtx', id: el.dataset.v, ctx: {} }),
     'cp.steps': (el, ev) => { ev.preventDefault(); const s = S.ui('p:cp:steps'); S.set(s, { [el.dataset.v]: !s[el.dataset.v] }) },
     'cp.source': (el) => {

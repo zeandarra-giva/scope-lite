@@ -260,23 +260,27 @@ function resolutionDetails(h, i = 0) {
   }
 }
 
-function seedHistory(n = 220) {
+// rnd, from/to (days ago), id and slow (a resH multiplier by openedAt) let
+// seedArchive reuse the same rules without touching the main random sequence.
+function historyRows(n, { rnd = rand, from = 0.5, to = 90, id: idOf = (i) => `INC00${(98000 + i * 7) % 100000}`, slow = () => 1 } = {}) {
+  const pick = (arr) => arr[Math.floor(rnd() * arr.length)]
+  const between = (a, b) => a + rnd() * (b - a)
   const rows = []
   for (let i = 0; i < n; i++) {
     const tpl = pick(ISSUE_TEMPLATES)
     const priority = pick(['P1', 'P2', 'P2', 'P3', 'P3', 'P3', 'P4'])
-    const openedAt = NOW - between(0.5, 90) * DAY
+    const openedAt = NOW - between(from, to) * DAY
     const queueWait = between(0.05, 1.6) * HOUR
-    const resH = Math.max(0.3, (priority === 'P1' ? between(0.8, 4.5) : between(0.6, 7.5)) * (rand() > 0.85 ? 2 : 1))
-    const lost = queueWait + (rand() > 0.6 ? between(0.2, 6) * HOUR : between(0, 0.4) * HOUR)
+    const resH = Math.max(0.3, (priority === 'P1' ? between(0.8, 4.5) : between(0.6, 7.5)) * (rnd() > 0.85 ? 2 : 1) * slow(openedAt))
+    const lost = queueWait + (rnd() > 0.6 ? between(0.2, 6) * HOUR : between(0, 0.4) * HOUR)
     const eze = resH * HOUR + lost
     const analyst = pick(ANALYSTS.filter((a) => a.role === 'Analyst'))
-    const transfers = rand() > 0.72 ? (rand() > 0.7 ? 2 : 1) : 0
-    const fcr = transfers === 0 && tpl.cause !== 'EUC-HW-01' && rand() > 0.35
-    const code = rand() > 0.9 ? pick(RESOLUTION_CODES).code : tpl.cause
+    const transfers = rnd() > 0.72 ? (rnd() > 0.7 ? 2 : 1) : 0
+    const fcr = transfers === 0 && tpl.cause !== 'EUC-HW-01' && rnd() > 0.35
+    const code = rnd() > 0.9 ? pick(RESOLUTION_CODES).code : tpl.cause
     const slaMet = eze <= PRIORITIES[priority].slaH * HOUR
     const resolvedAt = openedAt + eze
-    const id = `INC00${(98000 + i * 7) % 100000}`
+    const id = idOf(i)
     rows.push({
       id,
       desc: tpl.d.replace('{app}', tpl.app),
@@ -296,15 +300,28 @@ function seedHistory(n = 220) {
       slaMet,
       code,
       qa: {
-        documentation: rand() > 0.2,
-        contactLogged: rand() > 0.15,
+        documentation: rnd() > 0.2,
+        contactLogged: rnd() > 0.15,
         correctCode: code === tpl.cause,
-        validated: rand() > 0.12,
+        validated: rnd() > 0.12,
       },
       journey: buildJourney(openedAt, queueWait, resH, lost, code, transfers, analyst.name),
     })
   }
   return rows.map((h, i) => ({ ...h, ...resolutionDetails(h, i) })).sort((a, b) => b.resolvedAt - a.resolvedAt)
+}
+const seedHistory = (n = 220) => historyRows(n)
+
+// Older resolved tickets, from 90 days ago back to January two years ago, so
+// Reports → Compare & generate can compare years, quarters and months. Kept
+// apart from history so the rest of Scope still works on the last 90 days.
+// Its own seed keeps every other seeded number unchanged. Older tickets ran a
+// little slower, so year-over-year comparisons show a trend.
+function seedArchive() {
+  const start = new Date(NOW); start.setFullYear(start.getFullYear() - 2, 0, 1); start.setHours(0, 0, 0, 0)
+  const to = (NOW - start.getTime()) / DAY
+  const n = Math.round((to - 90) * 1.3)
+  return historyRows(n, { rnd: mulberry32(20240101), from: 90, to, id: (i) => `INC0${String(40000 + i * 3).padStart(6, '0')}`, slow: (at) => 1 + ((NOW - at) / DAY / 365) * 0.18 })
 }
 
 const DIAG_DETAIL = {
@@ -566,5 +583,5 @@ function computeAssist(history, codes, desc, hintCode, excludeId) {
   }
 }
 
-  Object.assign(S, { HOUR, DAY, NOW, ANALYSTS, byId, initials, ASSIGNMENT_GROUPS, PRODUCT_GROUPS, CHANNELS, BUSINESS_APPS, PRIORITIES, STATES, RES_GOAL_H, slaInfo, ROOT_CAUSES, RESOLUTION_CODES, codeInfo, RUNBOOK_STEPS, makeQueueTicket, MAX_LOAD_POINTS, loadOf, pickAssignee, seedQueue, BREACH_REASONS, ESCALATION_TARGETS, problemCategory, deflection, resolutionDetails, seedHistory, seedHandovers, SHIFT_CODES, weekStart, seedSchedule, startOfDay, addDays, dayKey, dayIndex, codeAt, locationOn, seedVault, TEAM_VAULT_SUMMARY, seedActivity, LEAVE_REQUESTS, fmtDur, fmtH, fmtTime, fmtDate, fmtDateTime, fmtDay, pct, avg, tokens, similarity, computeAssist })
+  Object.assign(S, { HOUR, DAY, NOW, ANALYSTS, byId, initials, ASSIGNMENT_GROUPS, PRODUCT_GROUPS, CHANNELS, BUSINESS_APPS, PRIORITIES, STATES, RES_GOAL_H, slaInfo, ROOT_CAUSES, RESOLUTION_CODES, codeInfo, RUNBOOK_STEPS, makeQueueTicket, MAX_LOAD_POINTS, loadOf, pickAssignee, seedQueue, BREACH_REASONS, ESCALATION_TARGETS, problemCategory, deflection, resolutionDetails, seedHistory, seedArchive, seedHandovers, SHIFT_CODES, weekStart, seedSchedule, startOfDay, addDays, dayKey, dayIndex, codeAt, locationOn, seedVault, TEAM_VAULT_SUMMARY, seedActivity, LEAVE_REQUESTS, fmtDur, fmtH, fmtTime, fmtDate, fmtDateTime, fmtDay, pct, avg, tokens, similarity, computeAssist })
 })()

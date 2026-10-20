@@ -11,7 +11,7 @@
     { id: 'reports', label: 'Reports', icon: 'chart', title: 'Reports', desc: 'Performance, quality and coaching, plus self-serve questions answered in your browser.' },
     { id: 'team', label: 'Team Management', icon: 'team', title: 'Team Management', desc: 'Roster, access, shift coverage, attendance and your password vault.' },
     { id: 'kb', label: 'Knowledge Base', icon: 'book', title: 'Knowledge Base', desc: 'Runbooks, policies and live reference data. Publish a page and Copilot can use it.' },
-    { id: 'copilot', label: 'Copilot', icon: 'spark', title: 'Copilot', desc: 'Help resolving tickets and reading the operation, grounded in your knowledge base and live data.' },
+    { id: 'copilot', label: 'Copilot', icon: 'spark', title: 'Copilot', bare: true, desc: 'Help resolving tickets and reading the operation, grounded in your knowledge base and live data.' },
     { id: 'suggestions', label: 'Suggestions', icon: 'bulb', title: 'Suggestions', managerOnly: true, desc: 'Ideas, bugs and workarounds from the team. File one in a few seconds; everyone sees the same list.' },
     { id: 'settings', label: 'Account profile', icon: 'user', title: 'Account profile', desc: 'Your profile, access, attendance history, shifts and leave.' },
   ]
@@ -110,10 +110,10 @@
         <div class="main">
           ${header(page, ws)}
           <main class="page" data-key="page-${route.page}-${route.key}">
-            <div class="page-head">
+            ${!page.bare && html`<div class="page-head">
               <h1>${page.title}</h1>
               <p>${page.desc}</p>
-            </div>
+            </div>`}
             ${!ws.home && html`<div class="callout accent ws-demo">${icon('info', 16)}<span><b>${ws.name} workspace (demo).</b> It runs the same modules as Solution Center for ${ws.groups.join(', ')}. This prototype only has Solution Center sample data, so that's what you see here.</span></div>`}
             ${body}
           </main>
@@ -142,8 +142,11 @@
   function header(page, ws) {
     const now = new Date(S.state.now)
     const dark = readTheme() === 'dark'
+    // The breadcrumb only shows once the trail is 3+ levels deep; pages add levels via S.nav(page, { crumbs: [...] }).
+    const trail = [ws.name, page.label, ...(S.route.crumbs || [])]
+    const sep = html`<span class="crumb-sep">${icon('arrowR', 14)}</span>`
     return html`<header class="header">
-      <nav class="crumb" aria-label="Breadcrumb"><span class="crumb-back" aria-hidden="true">${icon(page.icon, 16)}</span><span class="crumb-root">${ws.name}</span><span class="crumb-sep">${icon('arrowR', 14)}</span><b>${page.label}</b></nav>
+      ${trail.length >= 3 ? html`<nav class="crumb" aria-label="Breadcrumb"><span class="crumb-back" aria-hidden="true">${icon(page.icon, 16)}</span>${trail.slice(0, -1).map((c) => html`<span class="crumb-root">${c}</span>${sep}`)}<b>${trail[trail.length - 1]}</b></nav>` : html`<div></div>`}
       <div class="header-center">${snowStatus()}</div>
       <div class="header-right">
         <div class="date-chip" title="Local time">

@@ -243,8 +243,10 @@
   const val = (m, rows) => (m !== 'count' && !rows.length ? NaN : MEASURES[m].fn(rows))
   const fv = (m, v) => (v == null || isNaN(v) ? '—' : MEASURES[m].fmt(v))
   const diffText = (m, d) => isNaN(d) ? '—' : HOURS.includes(m) ? `${d > 0 ? '+' : ''}${d.toFixed(1)}h` : m === 'count' ? `${d > 0 ? '+' : ''}${Math.round(d)}` : `${d > 0 ? '+' : ''}${Math.round(d * 100)} pts`
-  // true when A is better than B on m, null when the measure has no better side or there's no difference.
-  const better = (m, d) => (isNaN(d) || Math.abs(d) < 1e-9 || MEASURES[m].better === 'none' ? null : MEASURES[m].better === 'low' ? d < 0 : d > 0)
+  // Smallest difference that still shows after rounding (0.1h, 1 ticket, 1 pt).
+  const minDiff = (m) => (HOURS.includes(m) ? 0.05 : m === 'count' ? 0.5 : 0.005)
+  // true when A is better than B on m, null when the measure has no better side or the difference rounds to nothing.
+  const better = (m, d) => (isNaN(d) || Math.abs(d) < minDiff(m) || MEASURES[m].better === 'none' ? null : MEASURES[m].better === 'low' ? d < 0 : d > 0)
   const tone = (m, d) => { const b = better(m, d); return b == null ? 'plain' : b ? 'good' : 'crit' }
   const groupBy = (rows, dim) => rows.reduce((g, h) => { const k = DIMENSIONS[dim].get(h); (g[k] = g[k] || []).push(h); return g }, {})
   const fmtRange = (r) => `${new Date(r.from).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })} – ${new Date(r.to - 1).toLocaleDateString([], { day: 'numeric', month: 'short', year: 'numeric' })}`
@@ -516,7 +518,7 @@
       ['Section', 'Item', 'A', 'B', 'Difference', 'A tickets', 'B tickets']]
     if (u.sections.kpis) METRICS.forEach((k) => { const a = val(k, A.rows), b = val(k, B.rows); rows.push(['Headline', MEASURES[k].label + unitOf(k), num(k, a), num(k, b), num(k, a - b), A.rows.length, B.rows.length]) })
     if (u.sections.breakdown) v.pairs.forEach((r) => rows.push([`${MEASURES[m].label}${unitOf(m)} by ${DIMENSIONS[dim].label.toLowerCase()}`, r.label, num(m, r.a), num(m, r.b), num(m, r.a - r.b), r.an, r.bn]))
-    if (u.sections.trend) v.trend.labels.forEach((l, i) => rows.push([`${MEASURES[m].label}${unitOf(m)} by ${v.trend.unit}`, l, num(m, v.trend.a[i]), num(m, v.trend.b[i]), num(m, v.trend.a[i] - v.trend.b[i]), '', '']))
+    if (u.sections.trend) v.trend.labels.forEach((l, i) => rows.push([`${MEASURES[m].label}${unitOf(m)} by ${v.trend.unit}`, l, num(m, v.trend.a[i]), num(m, v.trend.b[i]), v.trend.a[i] == null || v.trend.b[i] == null ? '' : num(m, v.trend.a[i] - v.trend.b[i]), '', '']))
     if (u.sections.causes) pairs(A, B, 'cause', 'count').forEach((r) => rows.push(['Root causes (tickets)', r.label, r.an, r.bn, r.an - r.bn, r.an, r.bn]))
     if (u.sections.groups) ASSIGNMENT_GROUPS.forEach((g) => ['res', 'sla'].forEach((k) => { const ra = A.rows.filter((h) => h.assignmentGroup === g), rb = B.rows.filter((h) => h.assignmentGroup === g); rows.push(['Assignment groups', `${g} · ${MEASURES[k].label}${unitOf(k)}`, num(k, val(k, ra)), num(k, val(k, rb)), num(k, val(k, ra) - val(k, rb)), ra.length, rb.length]) }))
     if (u.sections.qa) rows.push(['Quality', 'Average QA score', Math.round(avg(A.rows.map(qaScore)) || 0), Math.round(avg(B.rows.map(qaScore)) || 0), '', A.rows.length, B.rows.length])
@@ -543,7 +545,7 @@
     }
   }
 
-  const stamp = () => new Date().toISOString().slice(0, 10)
+  const stamp = () => new Date().toLocaleDateString('sv') // YYYY-MM-DD, local
   const fileName = (v, ext) => `scope-compare-${v.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 60)}-${stamp()}.${ext}`
   function generate() {
     const v = compareView()

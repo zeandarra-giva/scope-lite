@@ -17,11 +17,46 @@ $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DataDir = Join-Path $Root 'data'
 $DataFile = Join-Path $DataDir 'suggestions.jsonl'
-$MaxBody = 64KB
+$MaxBody = 1MB # an import arrives in chunks of 150 rows
 $Utf8 = New-Object System.Text.UTF8Encoding $false
 
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir | Out-Null }
 if (-not (Test-Path $DataFile)) { [System.IO.File]::WriteAllText($DataFile, '', $Utf8) }
+
+# ---------- Shared operations log (real team data) ----------
+# data\ops.jsonl: one event per line, {"seq":n,"at":ms,"by":"SOEID","e":{...}}.
+# The server gives each event the next seq and the time; browsers fold the log into state.
+# data\roster.json: the real team (SOEID, name, accessRole Lead|Analyst, active). The lead
+# keeps it up to date; data\roster.example.json shows the format. Both stay out of git.
+$OpsFile = Join-Path $DataDir 'ops.jsonl'
+$RosterFile = Join-Path $DataDir 'roster.json'
+# Event types the ops log accepts so far, and the ones only a Lead may send.
+$OpsTypes = @('manualIncAdd', 'manualIncWithdraw', 'manualIncDecide', 'shiftStart', 'settingsSet', 'ticketsImported', 'ticketsAssigned', 'ticketTag', 'ticketNote', 'importUndo', 'rotaSet', 'leaveAdd', 'leaveCancel', 'shiftPlanSet')
+$LeadOnly = @('manualIncDecide', 'settingsSet', 'rotaSet', 'shiftPlanSet')
+if (-not (Test-Path $OpsFile)) { [System.IO.File]::WriteAllText($OpsFile, '', $Utf8) }
+$OpsSeq = [int64]0
+$OpsEids = New-Object 'System.Collections.Generic.HashSet[string]'
+$lineNo = 0
+foreach ($line in [System.IO.File]::ReadAllLines($OpsFile, $Utf8)) {
+  $lineNo++
+  if (-not $line.Trim()) { continue }
+  # Never repair the log silently: a broken line stops the server so someone can look at it.
+  try { $o = $line | ConvertFrom-Json } catch { $o = $null }
+  if (-not $o -or -not $o.seq -or [int64]$o.seq -ne $OpsSeq + 1) {
+    Write-Host "data\ops.jsonl line $lineNo is broken or out of order. Fix or remove that line, then start again." -ForegroundColor Red
+    exit 1
+  }
+  $OpsSeq = [int64]$o.seq
+  if ($o.e -and $o.e.eid) { [void]$OpsEids.Add([string]$o.e.eid) }
+}
+
+function Read-Roster {
+  # The leading comma keeps an empty list a list: PowerShell would otherwise return nothing ($null),
+  # which reads as "invalid JSON". Piping $r flattens arrays the same way in PowerShell 5.1 and 7.
+  if (-not (Test-Path $RosterFile)) { return ,@() }
+  try { $r = [System.IO.File]::ReadAllText($RosterFile, $Utf8) | ConvertFrom-Json } catch { return $null }
+  return ,@($r | Where-Object { $null -ne $_ })
+}
 
 $Types = @{
   '.html' = 'text/html; charset=utf-8'; '.css' = 'text/css; charset=utf-8'; '.js' = 'text/javascript; charset=utf-8'
@@ -54,6 +89,8 @@ if ($Lan) {
   Write-Host '  Only this computer can open it. Use share.bat to let the team in.' -ForegroundColor DarkGray
 }
 Write-Host "  Suggestions file:  $DataFile"
+Write-Host "  Team ops log:      $OpsFile ($OpsSeq events)"
+if (-not (Test-Path $RosterFile)) { Write-Host '  No data\roster.json yet: copy data\roster.example.json, fill in the team, then reload Scope.' -ForegroundColor Yellow }
 Write-Host '  Keep this window open while you use Scope. Close it (or press Ctrl+C) to stop.' -ForegroundColor Yellow
 Write-Host ''
 if (-not $NoBrowser) { Start-Process $url }
@@ -116,6 +153,54 @@ function Handle($client) {
 
   # --- API ---
   if ($path -eq '/api/health') { Send-Text $stream 200 'OK' '{"ok":true}' 'application/json; charset=utf-8'; return }
+  if ($path -eq '/api/roster') {
+    if ($req.Method -ne 'GET') { Send-Text $stream 405 'Method Not Allowed' 'Use GET.'; return }
+    $roster = Read-Roster
+    if ($null -eq $roster) { Send-Text $stream 500 'Server Error' "data\roster.json isn't valid JSON. Compare it with data\roster.example.json."; return }
+    Send-Text $stream 200 'OK' (ConvertTo-Json -InputObject @($roster) -Depth 4 -Compress) 'application/json; charset=utf-8'
+    return
+  }
+  if ($path -eq '/api/ops') {
+    if ($req.Method -eq 'GET') {
+      $lines = [System.IO.File]::ReadAllLines($OpsFile, $Utf8) | Where-Object { $_.Trim() }
+      Send-Text $stream 200 'OK' ('[' + ($lines -join ',') + ']') 'application/json; charset=utf-8'
+      return
+    }
+    if ($req.Method -eq 'POST') {
+      $raw = $req.Body.Trim()
+      try { $obj = $raw | ConvertFrom-Json } catch { $obj = $null }
+      if (-not $obj -or -not $raw.StartsWith('{') -or $OpsTypes -notcontains $obj.type -or -not $obj.eid -or -not $obj.by) {
+        Send-Text $stream 400 'Bad Request' "That isn't an event Scope knows."
+        return
+      }
+      # A resent event (same eid) is accepted but not written twice.
+      if ($OpsEids.Contains([string]$obj.eid)) { Send-Text $stream 200 'OK' '{"ok":true,"duplicate":true}' 'application/json; charset=utf-8'; return }
+      # Who: must be an active person on the roster. Honour system until there is SSO.
+      $roster = Read-Roster
+      $me = @($roster) | Where-Object { $_.soeid -eq $obj.by -and $_.active -ne $false } | Select-Object -First 1
+      if (-not $me) { Send-Text $stream 403 'Forbidden' "$($obj.by) isn't on the active roster (data\roster.json)."; return }
+      if ($LeadOnly -contains $obj.type -and $me.accessRole -ne 'Lead') { Send-Text $stream 403 'Forbidden' 'Only a lead can do that.'; return }
+      # Light shape check; the browser's fold applies the full rules.
+      if ($obj.type -eq 'manualIncAdd') {
+        $bad = if ($obj.inc -notmatch '^INC\d{7,}$') { 'The INC number should look like INC0012345.' }
+          elseif (-not ($obj.handledAt -is [int64] -or $obj.handledAt -is [int] -or $obj.handledAt -is [double])) { 'Add when you handled it.' }
+          elseif ([int64]$obj.handledAt -gt [DateTimeOffset]::UtcNow.AddMinutes(5).ToUnixTimeMilliseconds()) { 'The handled time is in the future.' }
+          elseif (-not "$($obj.actions)".Trim()) { 'Describe the actions you took.' }
+          elseif (-not "$($obj.reason)".Trim()) { 'Give the reason for the manual entry.' }
+        if ($bad) { Send-Text $stream 400 'Bad Request' $bad; return }
+      }
+      $raw = $raw -replace "[`r`n]+", ' '
+      $at = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+      $script:OpsSeq++
+      $byJson = ConvertTo-Json -InputObject ([string]$obj.by) -Compress
+      [System.IO.File]::AppendAllText($OpsFile, ('{"seq":' + $script:OpsSeq + ',"at":' + $at + ',"by":' + $byJson + ',"e":' + $raw + '}' + "`n"), $Utf8)
+      [void]$OpsEids.Add([string]$obj.eid)
+      Send-Text $stream 200 'OK' ('{"ok":true,"seq":' + $script:OpsSeq + '}') 'application/json; charset=utf-8'
+      return
+    }
+    Send-Text $stream 405 'Method Not Allowed' 'Use GET or POST.'
+    return
+  }
   if ($path -eq '/api/events') {
     if ($req.Method -eq 'GET') {
       $lines = [System.IO.File]::ReadAllLines($DataFile, $Utf8) | Where-Object { $_.Trim() }

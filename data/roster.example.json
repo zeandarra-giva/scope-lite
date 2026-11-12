@@ -1,0 +1,5 @@
+[
+  { "soeid": "XX00001", "name": "Sample Lead", "accessRole": "Lead", "active": true },
+  { "soeid": "XX00002", "name": "Sample Analyst", "accessRole": "Analyst", "active": true },
+  { "soeid": "XX00003", "name": "Former Analyst", "accessRole": "Analyst", "active": false }
+]

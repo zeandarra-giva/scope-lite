@@ -1,6 +1,6 @@
 // Home (Queue command), ported from src/pages/Home.jsx: queue health KPIs,
-// schedule preview, fair-share assignment, and the team queue / my work /
-// shift handover / fix approvals tabs.
+// schedule preview, fair-share assignment, and the team queue / shift handover /
+// fix approvals tabs. "My work queue" moved to Queue Management → My tickets (D13).
 ;(function () {
   const { html, style, attrs, icon, prio, slaPill } = S
   const { HOUR, MAX_LOAD_POINTS, PRIORITIES, SHIFT_CODES, byId, fmtDateTime, fmtDay, fmtDur, fmtTime, initials, loadOf, slaInfo } = S
@@ -38,23 +38,22 @@
   // Page state: the open tab, the ticket in the drawer and the ticket being resolved.
   const page = () => S.ui('p:home', () => {
     const route = S.route
-    const lead = S.state.role === 'lead'
-    return { tab: route.tab || (route.approval ? 'approvals' : lead ? 'queue' : 'mine'), drawer: route.ticket || null, resolving: null }
+    return { tab: route.tab === 'mine' ? 'queue' : route.tab || (route.approval ? 'approvals' : 'queue'), drawer: route.ticket || null, resolving: null }
   })
 
   function Home(route) {
+    // On real team data the live Home replaces the prototype's (home-live.js).
+    if (S.homeLive && S.schedule && S.schedule.real() && S.qm.me()) return S.homeLive(route)
     const state = S.state
     const me = S.currentUser(state)
     const lead = state.role === 'lead'
     const u = page()
     const m = queueMetrics(state.tickets, state.analysts, state.now)
-    const myOpen = state.tickets.filter((t) => t.assignedTo === me.id)
     const pendingFix = state.approvals.filter((a) => a.status === 'Pending').length
     const drawerTicket = state.tickets.find((t) => t.id === u.drawer)
 
     const tabs = [
       { id: 'queue', label: 'Team queue', count: m.open.length },
-      { id: 'mine', label: 'My work queue', count: myOpen.length },
       { id: 'handover', label: 'Shift handover' },
       ...(lead ? [{ id: 'approvals', label: 'Fix approvals', count: pendingFix }] : []),
     ]
@@ -109,7 +108,6 @@
       <section class="card">
         <div style="padding:4px 12px 0">${S.tabs(tabs, u.tab, 'home.tab')}</div>
         ${u.tab === 'queue' && queueTable()}
-        ${u.tab === 'mine' && myWork()}
         ${u.tab === 'handover' && handover()}
         ${u.tab === 'approvals' && approvals(route.approval)}
       </section>`
@@ -214,34 +212,6 @@
         </table>
         ${!rows.length && html`<div class="empty">No tickets match these filters.</div>`}
       </div>
-    </div>`
-  }
-
-  function myWork() {
-    const state = S.state
-    const me = S.currentUser(state)
-    const mine = state.tickets
-      .filter((t) => t.assignedTo === me.id)
-      .map((t) => {
-        const s = slaInfo(t, state.now)
-        const score = PRIORITIES[t.priority].weight * 20 + (1 - s.pct) * 50 + (s.status === 'Breached' ? 30 : 0) - (t.state === 'Awaiting Customer' || t.state === 'On Hold' ? 25 : 0)
-        return { t, s, score }
-      })
-      .sort((a, b) => b.score - a.score)
-    const u = S.ui('p:home:mine', () => ({ sel: mine[0]?.t.id }))
-    const cur = state.tickets.find((t) => t.id === u.sel) || mine[0]?.t
-    if (!mine.length) return html`<div class="empty">Nothing assigned to ${me.name} right now. New tickets arrive automatically when you're online.</div>`
-    return html`<div class="grid g-1-2" style="padding:12px;gap:16px">
-      <div class="stack">
-        <div class="row"><span class="section-title">Prioritised for ${me.name.split(' ')[0]}</span><span class="muted small">priority × SLA urgency</span></div>
-        ${mine.map(({ t, s, score }, i) => html`
-          <button data-click="home.sel" data-v="${t.id}" data-key="${t.id}" class="qa" style="${style({ borderColor: cur?.id === t.id ? 'var(--accent)' : null, background: cur?.id === t.id ? 'var(--accent-soft)' : null, flexDirection: 'column', gap: 6 })}">
-            <div class="row" style="width:100%"><span class="mono small muted">#${i + 1}</span><span class="mono">${t.id}</span>${prio(t.priority)}<span class="spacer"></span>${slaPill(s.status)}</div>
-            <div class="small" style="text-align:left">${t.desc}</div>
-            <div class="row small muted" style="width:100%"><span>${t.state}</span><span class="spacer"></span><span class="num">${s.remaining > 0 ? `${fmtDur(s.remaining)} left` : `${fmtDur(-s.remaining)} over`}</span><span class="num" title="Priority score">· ${Math.round(score)}</span></div>
-          </button>`)}
-      </div>
-      <div class="card" style="padding:16px">${cur && S.ticketWorkspace(cur, { onResolve: 'home.resolve' })}</div>
     </div>`
   }
 
@@ -370,7 +340,6 @@
       if (el.value === 'Resolved') { el.value = t.state; S.set(page(), { resolving: t }) }
       else S.dispatch({ type: 'setState', id: t.id, state: el.value })
     },
-    'home.sel': (el) => S.set(S.ui('p:home:mine'), { sel: el.dataset.v }),
     'home.handoverLog': () => S.nav('explorer', { tab: 'handover' }),
     'home.ho': (el) => S.set(S.ui('p:home:handover'), { [el.dataset.k]: el.value }),
     'home.hoCopy': () => S.copyText(handoverData().summary),

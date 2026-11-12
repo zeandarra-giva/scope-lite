@@ -8,19 +8,25 @@
   S.pages.team = function Team(route) {
     const state = S.state
     const u = S.ui('p:team', () => ({ tab: route.tab || 'roster' }))
-    const tab = u.tab
+    const live = !!(S.schedule && S.schedule.real() && S.qm.me()) // real roster, rota and schedule
+    const tab = live && u.tab === 'vault' ? 'roster' : u.tab
     const expiring = state.vault.filter((v) => v.expiresAt != null && v.expiresAt - state.now <= v.reminderDays * DAY).length
     return html`
       ${S.tabs([
-        { id: 'roster', label: 'Roster & access', icon: 'team', count: state.analysts.length },
+        { id: 'roster', label: 'Roster & access', icon: 'team', count: live ? S.qm.roster.filter((p) => p.active !== false).length : state.analysts.length },
         { id: 'schedule', label: 'Schedule & coverage', icon: 'cal' },
         { id: 'attendance', label: 'Attendance', icon: 'clock' },
-        { id: 'vault', label: 'Password vault', icon: 'key', count: expiring || undefined },
+        // Hidden on real data: Scope doesn't store secrets (vault decision D7).
+        ...(live ? [] : [{ id: 'vault', label: 'Password vault', icon: 'key', count: expiring || undefined }]),
+        { id: 'rota', label: 'Proci rota', icon: 'swap' },
+        { id: 'settings', label: 'Team settings', icon: 'gear' },
       ], tab, 'team.tab')}
-      ${tab === 'roster' && roster()}
-      ${tab === 'schedule' && schedule(route)}
-      ${tab === 'attendance' && attendance()}
-      ${tab === 'vault' && vault()}`
+      ${tab === 'roster' && (live ? S.schedule.rosterPanel() : roster())}
+      ${tab === 'schedule' && (S.schedule.real() ? S.schedule.schedulePanel() : schedule(route))}
+      ${tab === 'attendance' && (S.schedule.real() ? S.schedule.attendancePanel() : attendance())}
+      ${tab === 'vault' && !live && vault()}
+      ${tab === 'rota' && S.rota.rotaPanel()}
+      ${tab === 'settings' && S.queue.settingsPanel()}`
   }
 
   const ACCESS = {

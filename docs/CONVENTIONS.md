@@ -11,8 +11,8 @@ js/lib/core.js          S.html, morph/render loop, events, S.ui state, overlays,
 js/data/*.js            sample data and rules, ported 1:1 (data, workspaces, analytics, kb, copilot)
 js/store.js             S.state, S.dispatch (same reducer as src/store.jsx), S.currentUser, S.buildNotifications
 js/components/ui.js     S.icon, S.modal, S.drawer, S.tabs, S.seg, S.infoTip, S.kpi, S.kpiShell, S.slaPill,
-                        S.prio, S.ring, S.lineChart, S.barChart, S.hBars, S.copyText, S.docText, S.inline
-js/components/*.js      bigger shared pieces (workspace.js, tour.js)
+                        S.prio, S.ring, S.lineChart, S.barChart, S.hBars, S.download, S.copyText, S.docText, S.inline
+js/components/*.js      bigger shared pieces (workspace.js, tour.js, report-export.js → S.reportHtml)
 js/pages/*.js           one file per page; each sets S.pages.<id> = (route) => markup
 js/suggest.js           Suggestions board + "Suggest" modal
 js/app.js               shell: workspace picker, sign-in, sidebar, header, notifications, dev controls, S.nav

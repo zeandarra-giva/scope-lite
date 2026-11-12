@@ -1,3 +1,9 @@
+# Real team data lives in data/ and never goes into git (this repo is public).
 data/*.jsonl
+data/roster.json
+data/*.csv
+data/*.xlsx
+data/inbox/
+data/backup/
 .DS_Store
 Thumbs.db

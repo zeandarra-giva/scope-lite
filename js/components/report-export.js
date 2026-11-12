@@ -67,7 +67,7 @@ button:hover { background: var(--hi); }
     }
     const fmt = (m, v) => (v == null || isNaN(v) ? '—' : RATIO.includes(m) ? `${Math.round(v * 100)}%` : HOURS.includes(m) ? `${v.toFixed(1)}h` : String(Math.round(v)))
     const diff = (m, d) => (d == null || isNaN(d) ? '—' : HOURS.includes(m) ? `${d > 0 ? '+' : ''}${d.toFixed(1)}h` : m === 'count' ? `${d > 0 ? '+' : ''}${Math.round(d)}` : `${d > 0 ? '+' : ''}${Math.round(d * 100)} pts`)
-    const better = (m, d) => (d == null || isNaN(d) || Math.abs(d) < 1e-9 || D.measures[m].better === 'none' ? null : D.measures[m].better === 'low' ? d < 0 : d > 0)
+    const better = (m, d) => (d == null || isNaN(d) || Math.abs(d) < (HOURS.includes(m) ? 0.05 : m === 'count' ? 0.5 : 0.005) || D.measures[m].better === 'none' ? null : D.measures[m].better === 'low' ? d < 0 : d > 0)
     const pill = (m, d) => { const b = better(m, d); return `<span class="pill ${b == null ? '' : b ? 'good' : 'crit'}">${esc(diff(m, d))}</span>` }
     const [A, B] = D.sides
     const COLOR = { a: 'var(--a)', b: 'var(--b)' }

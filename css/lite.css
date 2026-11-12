@@ -92,3 +92,67 @@ textarea.kb-body-in { min-height: 320px; }
   .pbar { grid-template-columns: minmax(0, 1fr) auto auto; }
   .pbar-tracks { grid-column: 1 / -1; order: 3; }
 }
+
+/* qm: Queue Management (manual INC entries, live team data) */
+.qm-form-top { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 900px) { .qm-form-top { grid-template-columns: minmax(0, 1fr); } }
+.qm-err { color: var(--crit); font-size: 12.5px; }
+.qm-people { display: flex; flex-wrap: wrap; gap: 8px; }
+.qm-people .btn { gap: 8px; }
+.qm-tbl td { vertical-align: middle; }
+.qm-tbl tr.sel td { background: var(--accent-soft); }
+.qm-clip { max-width: 420px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qm-toolbar { flex-wrap: wrap; gap: 8px; }
+.qm-toolbar .kb-search { min-width: 240px; flex: 1 1 240px; }
+.qm-toolbar select.in { width: auto; }
+.qm-dl { display: grid; grid-template-columns: minmax(120px, max-content) minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+.qm-dl dt { color: var(--ink-2); font-size: 13px; }
+.qm-dl dd { margin: 0; }
+.qm-pre { white-space: pre-wrap; overflow-wrap: anywhere; }
+.qm-decide { border-top: 1px solid var(--line); padding-top: 14px; }
+.nowrap { white-space: nowrap; }
+
+/* sign-in: Dev Login from the team roster (who → role → shift) */
+.roster-login { gap: 14px; }
+.steps { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, 1fr); position: relative; }
+.steps::before { content: ''; position: absolute; top: 13px; left: 16.6%; right: 16.6%; height: 2px; background: var(--line); }
+.step { display: flex; flex-direction: column; align-items: center; gap: 4px; position: relative; color: var(--ink-2); }
+.step-dot { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; font: 600 12.5px var(--f-ui); background: var(--card); border: 2px solid var(--line); color: var(--ink-2); }
+.step-l { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; }
+.step.on .step-dot { background: var(--ink); border-color: var(--ink); color: var(--card); }
+.step.on .step-l { color: var(--ink); font-weight: 600; }
+.step.done .step-dot { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
+.roster-q { font-size: 18px; }
+.roster-list { display: flex; flex-direction: column; max-height: 280px; overflow-y: auto; border: 1px solid var(--line); border-radius: 12px; }
+.roster-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 0; border-bottom: 1px solid var(--line); background: none; text-align: left; cursor: pointer; color: inherit; font: inherit; }
+.roster-row:last-child { border-bottom: 0; }
+.roster-row:hover { background: var(--hover); }
+.roster-row.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+.roster-row:focus-visible, .choice:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.choice-list { display: flex; flex-direction: column; gap: 8px; }
+.choice { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: none; text-align: left; cursor: pointer; color: inherit; font: inherit; }
+.choice:hover { background: var(--hover); }
+.choice.on { border-color: var(--accent); background: var(--accent-soft); }
+.signin-switch { align-self: center; }
+
+/* Queue: ServiceNow export drop zone and team settings */
+.qm-drop { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 22px 16px; border: 1.5px dashed var(--line); border-radius: 14px; text-align: center; cursor: pointer; color: var(--ink-2); }
+.qm-drop:hover, .qm-drop:focus-within { border-color: var(--accent); background: var(--hover); }
+.qm-drop.on { border-color: var(--accent); background: var(--accent-soft); }
+.qm-drop b { color: var(--ink); }
+.qm-settings { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+
+/* Proci rota */
+.rota-changed { font-weight: 700; color: var(--accent); }
+.rota-leave { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
+.rota-weeks select.in { min-width: 180px; }
+
+/* Header: ServiceNow import health dot; real schedule */
+.dot.warn { background: var(--warn); }
+.dot.crit { background: var(--crit); }
+.sched-real th.today, .sched-real td.today { background: var(--accent-soft); }
+.sched-real td { vertical-align: top; }
+.sched-real select.in { min-width: 140px; }
+.warn-t { color: var(--warn); }
+.live-ho { margin: 0; padding: 12px 14px; border-radius: 12px; background: var(--hover); font-size: 13px; white-space: pre-wrap; }
+.divider { height: 1px; background: var(--line); margin: 2px 0; }

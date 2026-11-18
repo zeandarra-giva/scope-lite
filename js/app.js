@@ -53,6 +53,8 @@
     // The workspace picker is off for now (lead, 2026-11-19): Scope opens straight into the
     // Solution Center. workspacePicker() stays for when the other workspaces come back.
     wsId: 'sc',
+    // Sidebar collapsed to icons (remembered in this browser).
+    railCollapsed: storage.get('scope-rail') === 'collapsed',
   }
   if (app.session && app.session !== S.state.role) S.state = { ...S.state, role: app.session }
   const pickWs = (id) => { storage.set(WS_KEY, id); app.wsId = id; S.render() }
@@ -87,21 +89,22 @@
     // Render the page first: its modals and drawers land in the overlay layer below.
     const body = S.pages[page.id] ? S.pages[page.id](route) : notPorted(page)
     return html`
-      <div class="app">
+      <div class="${cls('app', app.railCollapsed && 'rail-collapsed')}">
         <nav class="rail" aria-label="Main" data-tour="rail">
           <div class="brand">
-            <div class="brand-mark ws-${ws.tone}">${ws.short}</div>
-            <div>
+            <div class="brand-mark ws-${ws.tone}" title="${app.railCollapsed ? `scope · ${ws.name}${ws.home ? ' Hub' : ''}` : ''}">${ws.short}</div>
+            <div class="brand-text">
               <div class="brand-name">scope</div>
               <div class="brand-sub">${ws.name}${ws.home ? ' Hub' : ''}</div>
             </div>
+            <button class="rail-toggle" data-click="app.rail" aria-label="${app.railCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}" aria-expanded="${!app.railCollapsed}" title="${app.railCollapsed ? 'Expand the sidebar' : 'Collapse the sidebar'}">${icon(app.railCollapsed ? 'chevR' : 'chevL', 16)}</button>
           </div>
           <div class="rail-nav">
             ${NAV_GROUPS.filter(([, ids]) => PAGES.some((p) => ids.includes(p.id) && canOpen(p))).map(([group, ids]) => html`<div style="display:contents">
               <div class="rail-group">${group}</div>
               ${PAGES.filter((p) => ids.includes(p.id) && canOpen(p)).map((p) => html`
-                <button class="nav-btn" ${attrs({ 'aria-current': route.page === p.id ? 'page' : null })} data-click="app.nav" data-v="${p.id}">
-                  ${icon(p.icon)}${p.label}
+                <button class="nav-btn" ${attrs({ 'aria-current': route.page === p.id ? 'page' : null, title: app.railCollapsed ? p.label : null, 'aria-label': app.railCollapsed ? p.label : null })} data-click="app.nav" data-v="${p.id}">
+                  ${icon(p.icon)}<span class="nav-label">${p.label}</span>
                   ${p.id === 'home' && breached > 0 && html`<span class="nav-count" title="Tickets past SLA">${breached}</span>`}
                   ${p.id === 'qm' && S.qm && S.qm.badge() > 0 && html`<span class="nav-count sugg-count" title="Manual INC entries waiting for you to verify">${S.qm.badge()}</span>`}
                   ${p.id === 'suggestions' && S.sugg && S.sugg.openCount() > 0 && html`<span class="nav-count sugg-count" title="Open suggestions">${S.sugg.openCount()}</span>`}
@@ -277,7 +280,7 @@
         <button role="menuitem" class="menu-item" data-click="app.profile" data-v="settings">${icon('user', 16)}Account profile</button>
         <button role="menuitem" class="menu-item danger" data-click="app.profile" data-v="logout">${icon('logout', 16)}Log out</button>
       </div>`}
-      <button class="${cls('profile-btn', active && 'active')}" data-click="app.pop" data-v="profile" aria-haspopup="menu" aria-expanded="${open}">
+      <button class="${cls('profile-btn', active && 'active')}" data-click="app.pop" data-v="profile" aria-haspopup="menu" aria-expanded="${open}" ${attrs({ title: app.railCollapsed ? `${me.name} · ${me.role}` : null })}>
         <span class="avatar sm">${initials(me.name)}</span>
         <span class="profile-text"><b>${me.name}</b><span>${me.role}</span></span>
         ${icon(open ? 'chevDown' : 'chevUp', 15)}
@@ -477,6 +480,7 @@
       S.nav(n.page, { tab: n.tab, ticket: n.ticket, approval: n.approval })
     },
     'app.sound': () => { const on = !S.queue.soundOn(); storage.set(S.queue.SOUND_KEY, on ? null : 'off'); if (on) S.queue.chime(); S.render() },
+    'app.rail': () => { app.railCollapsed = !app.railCollapsed; storage.set('scope-rail', app.railCollapsed ? 'collapsed' : null); S.pop = null; S.render() },
     'app.profile': (el) => {
       S.pop = null
       const v = el.dataset.v

@@ -479,13 +479,32 @@ hr.sep { border: 0; border-top: 1.5px dashed var(--line); margin: 0; }
 .dev-panel { width: min(320px, calc(100vw - 32px)); background: var(--surface); border-radius: 20px; box-shadow: var(--shadow); padding: 16px; display: flex; flex-direction: column; gap: 14px; border: 1.5px dashed var(--line-strong); }
 .dev-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 
+/* ---------- Collapsible sidebar (desktop) ---------- */
+.brand-text { min-width: 0; }
+.rail-toggle { margin-left: auto; width: 30px; height: 30px; flex: none; display: grid; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--rail-ink); cursor: pointer; }
+.rail-toggle:hover { background: var(--rail-active); color: var(--rail-text); }
+.rail-toggle:focus-visible { outline: 2px solid var(--rail-hi); outline-offset: 2px; }
+@media (min-width: 901px) {
+  .app { transition: grid-template-columns .2s ease; }
+  .app.rail-collapsed { grid-template-columns: 88px minmax(0, 1fr); }
+  .rail-collapsed .rail { padding: 22px 12px 16px; }
+  .rail-collapsed .brand { flex-direction: column; gap: 14px; padding: 0 0 18px; }
+  .rail-collapsed .rail-toggle { margin: 0; }
+  .rail-collapsed .brand-text, .rail-collapsed .nav-label, .rail-collapsed .rail-group, .rail-collapsed .profile-text, .rail-collapsed .profile-btn > svg { display: none; }
+  .rail-collapsed .rail-nav > div + div::before { content: ''; display: block; height: 1px; margin: 10px 14px; background: var(--rail-active); }
+  .rail-collapsed .nav-btn { justify-content: center; padding: 12px 0; }
+  .rail-collapsed .nav-count { position: absolute; top: 3px; right: 4px; margin: 0; padding: 0 5px; font-size: 10px; }
+  .rail-collapsed .profile-btn { justify-content: center; padding: 8px 0; }
+  .rail-collapsed .profile-menu { right: auto; width: 260px; }
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 900px) {
   .app { grid-template-columns: minmax(0, 1fr); }
   .rail { position: static; height: auto; margin: 12px 12px 0; flex-direction: row; align-items: center; overflow-x: auto; padding: 10px 12px; gap: 4px; border-radius: 20px; }
   .brand { padding: 0 8px 0 0; }
   .brand-name { font-size: 20px; }
-  .brand-sub, .rail-foot, .rail-group { display: none; }
+  .brand-sub, .rail-foot, .rail-group, .rail-toggle { display: none; }
   .app { grid-template-rows: auto 1fr; }
   .rail { flex-wrap: wrap; overflow: visible; row-gap: 8px; }
   .rail .rail-nav { display: flex; order: 3; width: 100%; gap: 4px; overflow-x: auto; scrollbar-width: none; }

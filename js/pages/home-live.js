@@ -73,13 +73,13 @@
     return html`<div class="card">
       <div class="card-h" style="flex-wrap:nowrap">
         <h2 style="white-space:nowrap">Tickets per person</h2>
-        ${html`<button class="btn sm" data-click="live.rebalance" ${attrs({ disabled: !work, title: `${spread <= 1 ? 'Balanced' : 'Uneven'}: spread ${spread} (highest minus lowest today, among people getting tickets). ${work ? `${rb.moves.length} to move${m.unassigned && pool.length ? `, ${m.unassigned} to hand out` : ''}` : 'Already even.'}` })}>${icon('swap', 14)}Rebalance${work > 0 && html` <b class="num">${work}</b>`}</button>`}
+        ${html`<button class="btn sm" data-click="live.rebalance" ${attrs({ title: `${spread <= 1 ? 'Balanced' : 'Uneven'}: spread ${spread} (highest minus lowest today, among people getting tickets). ${work ? `${rb.moves.length} to move${m.unassigned && pool.length ? `, ${m.unassigned} to hand out` : ''}` : 'Already even.'}` })}>${icon('swap', 14)}Rebalance${work > 0 && html` <b class="num">${work}</b>`}</button>`}
         <span class="spacer"></span>
         ${S.infoTip('live-fair', 'Equal distribution', html`
           <span>The big number is what each person <b>holds now</b>: every open ticket on them, including ones carried over from earlier days and ones ServiceNow assigned to them. Under the name: how many became theirs <b>today</b> and how many of those are done (Resolved, Transferred or gone from the export). Faded rows aren't getting tickets today (hover a name to see why).</span>
           <span>Tickets are shared equally among <b>everyone scheduled to work today</b> in Team Management (a shift set, not on leave, not a rest day), whether or not they have signed in yet. Each new ticket goes to whoever has <b>the fewest tickets today</b> (assigned + verified manual entries). Ties go to whoever got one least recently.</span>
           <span>${auto ? html`<b>Automatic:</b> new tickets are handed out as soon as they load, so nobody presses a button.` : html`Automatic hand-out is <b>off</b> in Team settings, so use Rebalance or Hand out.`}</span>
-          <span><b>EERS</b> tickets go to today's Proci Backup. Tickets ServiceNow already assigned to an active team member count for that person and are never moved.</span>
+          <span><b>EERS</b> tickets (that say "EERS" or "#EERS") go to today's Proci Backup. ServiceNow's "assigned to" doesn't decide anything: every ticket in the export is shared out, and the analyst reassigns it in ServiceNow to match.</span>
           <span><b>Evens out by itself:</b> when someone has 2 or more tickets more than someone else today, Scope moves <b>untouched</b> tickets (still Assigned, not updated in ServiceNow since Scope gave them out) to whoever has the fewest. Tickets of people not working today (leave, rest day) move too.</span>
           <span><b>Rebalance</b> (anyone) does the same on demand and can also move tickets that were updated in ServiceNow but are still tagged Assigned. Every move records its reason.</span>`)}
       </div>
@@ -182,7 +182,7 @@
             </div>
           </div>`)}
         ${S.kpi({ label: 'Waiting for someone', icon: 'user', tone: m.unassigned ? 'warn' : 'good', value: m.unassigned,
-          info: html`<span>Open tickets nobody on the team owns yet. Scope shares them out by itself among everyone <b>scheduled to work today</b> in Team Management, signed in or not. Tickets ServiceNow already assigned to an active team member stay with them.</span>`,
+          info: html`<span>Open tickets nobody on the team owns yet. Scope shares them out by itself among everyone <b>scheduled to work today</b> in Team Management, signed in or not. ServiceNow's "assigned to" doesn't decide who gets a ticket.</span>`,
           foot: m.unassigned ? Q().waitingReason(m.v, m.now) : 'Every open ticket has an owner' })}
         ${S.kpi({ label: 'On shift now', icon: 'team', tone: 'navy', value: m.nowOn, unit: `/ ${m.scheduled} scheduled`,
           info: html`<span>Signed in today and before the end of their shift. Scheduled comes from Team Management (rota and shifts).</span>`,
@@ -214,7 +214,7 @@
     'live.sched': (el) => { S.nav('team'); S.set(S.ui('p:team'), { tab: 'schedule' }); S.schedule.showWeek(el.dataset.v) },
     'live.rebalance': async () => {
       const r = await Q().rebalance()
-      S.dispatch({ type: 'toast', text: r.handed || r.moved ? `Rebalanced: ${[r.handed && `${r.handed} handed out`, r.moved && `${r.moved} moved`].filter(Boolean).join(', ')}` : 'Already even' })
+      S.dispatch({ type: 'toast', text: `${r.handed || r.moved ? `Rebalanced: ${[r.handed && `${r.handed} handed out`, r.moved && `${r.moved} moved`].filter(Boolean).join(', ')}.` : 'Nothing to move.'}${r.why ? ` ${r.why}` : r.handed || r.moved ? '' : ' Everyone is within 1 ticket of each other today.'}` })
     },
     'live.go': (el) => { S.nav(el.dataset.v); if (el.dataset.t) S.set(S.ui('p:team'), { tab: el.dataset.t }) },
   })

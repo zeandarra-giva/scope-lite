@@ -10,8 +10,7 @@
 //  - Assignment: the moment tickets load, EERS tickets go to today's Proci Backup and
 //    the rest to whoever has handled the fewest tickets today, among everyone scheduled
 //    to work today (lead, 2026-11-19; signed in or not). Every assignment carries its
-//    reason. Tickets ServiceNow already assigned to an active team member are skipped
-//    and count for that person; anyone else's are shared out.
+//    reason. ServiceNow's "assigned to" doesn't decide it: every ticket is shared out.
 //    With "Hand out automatically" on (Team settings), any open browser hands out new
 //    unassigned tickets as soon as they load, so nobody has to press a button.
 //  - Rebalance (anyone; also automatic for untouched tickets): moves tickets so today's handled counts are even,
@@ -46,7 +45,7 @@
     { key: 'minEarly', group: 'Shifts', label: 'At least on Early', unit: 'people, each weekday', type: 'num', def: 2 },
     { key: 'minLate', group: 'Shifts', label: 'At least on Late', unit: 'people, each weekday', type: 'num', def: 1 },
     { key: 'cutoffMinutes', group: 'Shifts', label: 'Stop handing out tickets', unit: 'minutes before the shift ends', type: 'num', def: 30 },
-    { key: 'eersKeywords', group: 'Assignment', label: 'EERS keywords', unit: 'whole words, comma-separated, in the short description or description', type: 'text', def: 'EERS, entitlement, entitlements' },
+    { key: 'eersKeywords', group: 'Assignment', label: 'EERS keywords', unit: 'whole words, comma-separated, in the short description or description', type: 'text', def: 'EERS, #EERS' }, // QueueManager's keywords (lead, 2026-11-19; 'entitlement' matched too much)
     { key: 'autoHandout', group: 'Assignment', label: 'Hand out new tickets automatically', unit: 'as soon as they load, to everyone scheduled today', type: 'bool', def: true },
     { key: 'pool.mainProci', group: 'Assignment', label: 'Main Proci gets regular tickets', type: 'bool', def: true },
     { key: 'pool.backup', group: 'Assignment', label: 'Proci Backup gets regular tickets too', type: 'bool', def: true },
@@ -109,7 +108,7 @@
             imp.added++
           } else {
             t.lastImport = e.importId
-            if ((r.updated || 0) > (t.updated || 0)) { Object.assign(t, r); imp.updated++ }
+            if ((r.updated || 0) > (t.updated || 0)) { Object.assign(t, r); imp.updated++ } else { t.eers = r.eers; t.sn = r.sn } // keywords may have changed
           }
         }
       } else if (e.type === 'ticketsAssigned' && !undone.has(e.importId) && Array.isArray(e.list)) {
@@ -180,14 +179,14 @@
   // ---------- People, shifts, load ----------
   const nameOf = (soeid) => ((qm.roster.find((p) => p.soeid === soeid) || {}).name || soeid)
   // The ticket's owner: whoever Scope assigned it to, else the roster person ServiceNow names.
+  // The ticket's owner is whoever Scope gave it to. ServiceNow's "assigned to" doesn't decide
+  // it (lead, 2026-11-19, replaces D20): every ticket in the export is shared evenly across
+  // everyone scheduled today, and the analyst reassigns it in ServiceNow to match.
   function owner(t) {
-    if (t.to) return t.to
-    if (!t.sn) return null
-    // Only an active team member keeps a ticket ServiceNow assigned to them (D20). Anyone
-    // inactive or not on the roster: the ticket is shared out like an unassigned one.
-    const p = qm.roster.find((x) => x.active !== false && norm(x.name) === norm(t.sn))
-    return p ? p.soeid : null
+    return t.to || null
   }
+  // The active team member ServiceNow names in "assigned to", if any (shown, never used to assign).
+  const snMember = (t) => (t.sn ? qm.roster.find((x) => x.active !== false && norm(x.name) === norm(t.sn)) || null : null)
   const minutes = (hhmm) => { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
   const at = (now, hhmm) => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() + minutes(hhmm) * 60e3 }
   function shiftWindow(shiftId, s, now) {
@@ -253,9 +252,8 @@
     const pool = people.filter((p) => now < p.w.cutoff)
     const counts = new Map(pool.map((p) => [p.soeid, load(p.soeid)]))
     const last = new Map() // tie-break: whoever got a ticket least recently in this batch
-    // Shared out: every ticket nobody on the team holds. A ticket ServiceNow assigned to
-    // someone on the roster stays theirs (D20); one assigned to someone off the roster is
-    // shared out like an unassigned one (lead, 2026-11-19).
+    // Shared out: every ticket Scope hasn't given to anyone yet, whatever ServiceNow's
+    // "assigned to" says (lead, 2026-11-19).
     const todo = tickets.filter((t) => t.inLatest && !t.to && !owner(t) && t.tag === 'Assigned')
       .sort((a, b) => (a.p || 9) - (b.p || 9) || (a.opened || 0) - (b.opened || 0))
     const regular = pool.filter((p) => (p.duty !== 'MAIN_PROCI' || settings['pool.mainProci'] !== false) && (p.duty !== 'PROCI_BACKUP' || settings['pool.backup'] !== false))
@@ -275,7 +273,7 @@
         if (who) why = `${t.eers ? `EERS (${t.eers}), but no Proci Backup on shift. ` : ''}Fewest handled today (${counts.get(who.soeid)}) of ${list.length} on shift`
       }
       if (!who) { left.push(t); continue }
-      if (t.sn) why += '. In ServiceNow it was assigned to someone not on the active team: reassign it there'
+      if (t.sn) { const m = snMember(t); if (!m || m.soeid !== who.soeid) why += m ? `. In ServiceNow it's with ${m.name}: reassign it there` : '. In ServiceNow it\'s assigned to someone not on the active team: reassign it there' }
       out.push({ n: t.n, to: who.soeid, reason: why })
       counts.set(who.soeid, counts.get(who.soeid) + 1)
       last.set(who.soeid, ++i)
@@ -342,7 +340,14 @@
     const handed = await handOut(null)
     const p = rebalancePreview()
     if (p.moves.length) await qm.send({ type: 'ticketsAssigned', override: true, list: p.moves.map(({ n, to, reason }) => ({ n, to, reason })) })
-    return { handed: handed.list.length, moved: p.moves.length }
+    // Still uneven after moving: say why the rest can't move.
+    const now = Date.now(); const v = view()
+    const people = scheduledToday(now)
+    const counts = people.map((x) => loadToday(x.soeid, now, v.tickets).total)
+    const spread = counts.length ? Math.max(...counts) - Math.min(...counts) : 0
+    const why = !people.length ? 'Nobody is scheduled to work today.'
+      : spread > 1 ? "The rest can't move: they're On Hold, EERS with the Proci Backup, or verified manual entries, which stay with their person." : ''
+    return { handed: handed.list.length, moved: p.moves.length, why }
   }
 
   // Why open tickets are still waiting for an owner, in words (Home's "Waiting" card).
@@ -512,7 +517,7 @@
     const newer = out.rows.filter((r) => known.has(r.n) && r.updated > (known.get(r.n).updated || 0))
     const inFile = new Set(out.rows.map((r) => r.n))
     const gone = view().tickets.filter((t) => t.inLatest && !inFile.has(t.n))
-    S.set(u, { busy: false, preview: { file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn && qm.roster.some((p) => p.active !== false && norm(p.name) === norm(r.sn))).length, offTeam: out.rows.filter((r) => r.sn && !qm.roster.some((p) => p.active !== false && norm(p.name) === norm(r.sn))).length } })
+    S.set(u, { busy: false, preview: { file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn).length } })
   }
   async function confirmImport() {
     const u = imp()
@@ -563,8 +568,8 @@
   const eersPill = (t) => t.eers && html`<span class="pill sky" title="${t.eers}">EERS</span>`
   const ownerCell = (t) => {
     const o = owner(t)
-    if (o) return html`${nameOf(o)}${!t.to && html` <span class="muted small" title="Assigned in ServiceNow">(ServiceNow)</span>`}`
-    if (t.sn) return html`<span class="pill warn" title="Assigned in ServiceNow to someone not on the active team. Scope shares it out like an unassigned ticket.">Unassigned</span>`
+    if (o) return html`${nameOf(o)}`
+    if (t.sn) return html`<span class="pill warn" title="Not shared out yet. ServiceNow's 'assigned to' doesn't decide who gets it in Scope.">Unassigned</span>`
     return html`<span class="pill warn">Unassigned</span>`
   }
 
@@ -608,7 +613,7 @@
         <td>${t.inLatest && OPEN_TAGS.includes(t.tag) && qm.me() ? ownerPick(t) : html`<div>${ownerCell(t)}</div>`}</td>
         <td class="nowrap small" title="Since the ticket was opened: ${fmtWhen(t.opened)}">${t.opened ? ageShort(now - t.opened) : '—'}</td>
         <td class="nowrap small" title="Since it first came into the queue (Scope's first export with it): ${fmtWhen(t.firstSeen)}">${t.firstSeen ? ageShort(now - t.firstSeen) : '—'}</td>
-        <td class="nowrap small">${t.to ? html`<span title="${fmtWhen(t.assignedAt)}">${fmtShort(t.assignedAt)}</span>` : owner(t) ? html`<span class="muted" title="Assigned in ServiceNow before it reached Scope">ServiceNow</span>` : '—'}</td>
+        <td class="nowrap small">${t.to ? html`<span title="${fmtWhen(t.assignedAt)}">${fmtShort(t.assignedAt)}</span>` : '—'}</td>
         <td class="tq-tag"><span class="row tight" style="flex-wrap:nowrap">${t.inLatest ? tagPill(t.tag) : html`<span class="pill" title="Not in the latest export: closed or moved to another group in ServiceNow">Left the queue</span>`}
           ${t.inLatest && OPEN_TAGS.includes(t.tag) && healthPills(t, s)}</span></td>
       </tr>`
@@ -654,7 +659,7 @@
           <dt>Owner</dt><dd>${ownerCell(t)}</dd>
           ${t.reason && html`<dt>Why them</dt><dd>${t.reason}<div class="muted small">${fmtWhen(t.assignedAt)}</div></dd>`}
           <dt>Priority</dt><dd>${t.priority}</dd>
-          <dt>ServiceNow</dt><dd>${t.state} · ${t.group}${t.sn && (owner(t) && !t.to ? html` · assigned to ${t.sn}` : html` · assigned to someone not on the active team`)}</dd>
+          <dt>ServiceNow</dt><dd>${t.state} · ${t.group}${t.sn && (snMember(t) ? html` · assigned to ${snMember(t).name}${snMember(t).soeid !== t.to ? ' (reassign it there)' : ''}` : html` · assigned to someone not on the active team`)}</dd>
           <dt>Opened</dt><dd>${fmtWhen(t.opened)}</dd>
           <dt>Last updated</dt><dd>${fmtWhen(t.updated)} ${t.inLatest && healthPills(t, v.settings)}</dd>
           ${t.eers && html`<dt>EERS because</dt><dd>${t.eers}</dd>`}
@@ -724,8 +729,7 @@
           ${S.kpi({ label: 'EERS', icon: 'key', tone: 'navy', value: pv.eers, foot: 'Go to the Proci Backup' })}
           ${S.kpi({ label: 'Left the queue', icon: 'swap', tone: 'warn', value: pv.gone, foot: 'Open before, not in this file' })}
         </div>
-        <div class="muted small">${pv.same} unchanged · ${pv.snAssigned} already assigned in ServiceNow (skipped, counted for that person)${pv.dupes > 0 && ` · ${pv.dupes} repeated rows merged`}</div>
-        ${pv.offTeam > 0 && html`<div class="callout small">${icon('info', 15)}<span><b>${pv.offTeam} assigned in ServiceNow to people not on the active team.</b> Scope shares them out equally like unassigned tickets. If one belongs to a current team member, check their name in <code>data\roster.json</code> is spelled exactly as in ServiceNow.</span></div>`}
+        <div class="muted small">${pv.same} unchanged · ${pv.snAssigned} with an 'assigned to' in ServiceNow (shared out like the rest)${pv.dupes > 0 && ` · ${pv.dupes} repeated rows merged`}</div>
         ${pv.skipped.length > 0 && html`<details class="small"><summary>${pv.skipped.length} rows skipped</summary><ul>${pv.skipped.slice(0, 20).map((x) => html`<li>Line ${x.line}: ${x.why}</li>`)}</ul></details>`}
         <div class="row"><span class="spacer"></span><button class="btn ghost" data-click="queue.cancel">Cancel</button>
           <button class="btn primary" data-click="queue.confirm" ${attrs({ disabled: u.busy || !pv.rows.length })}>${icon('check', 15)}Load and hand out</button></div>

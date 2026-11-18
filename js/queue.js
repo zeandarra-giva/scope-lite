@@ -14,7 +14,7 @@
 //    and count for that person; anyone else's are shared out.
 //    With "Hand out automatically" on (Team settings), any open browser hands out new
 //    unassigned tickets as soon as they load, so nobody has to press a button.
-//  - Rebalance (lead): moves still-untouched tickets so today's handled counts are even,
+//  - Rebalance (anyone; also automatic for untouched tickets): moves tickets so today's handled counts are even,
 //    and moves tickets off people who aren't working today (leave, rest day).
 //  - My tickets: a working view. The owner tags each ticket (Assigned / On Hold /
 //    Transferred / Resolved) and adds notes. Transferred counts as handled (D17).
@@ -293,7 +293,7 @@
     return p
   }
 
-  // ---------- Rebalance (lead) ----------
+  // ---------- Rebalance (manual button for anyone, and automatic) ----------
   // Pure. Two kinds of move, both only for tickets Scope assigned that are still tagged
   // Assigned (On Hold means someone is working it; ServiceNow-assigned ones stay put):
   //  1. Off people who no longer get tickets (past cutoff, signed out, on leave).
@@ -301,13 +301,15 @@
   //     gap is 1 or less. Only tickets handed out today move here, so each move takes
   //     one off the giver's count and adds one to the receiver's.
   // EERS tickets only move to a Proci Backup.
-  function rebalancePlan({ tickets, people, now, load }) {
+  // untouchedOnly (the automatic even-out): also skip any ticket updated in ServiceNow since
+  // Scope gave it out, so a ticket someone has started on stays with them.
+  function rebalancePlan({ tickets, people, now, load, untouchedOnly = false }) {
     const pool = people.filter((p) => now < p.w.cutoff)
     const inPool = new Set(pool.map((p) => p.soeid))
     const counts = new Map(pool.map((p) => [p.soeid, load(p.soeid)]))
     const backups = pool.filter((p) => p.duty === 'PROCI_BACKUP')
     const from = startOfDay(now)
-    const movable = tickets.filter((t) => t.inLatest && t.to && t.tag === 'Assigned')
+    const movable = tickets.filter((t) => t.inLatest && t.to && t.tag === 'Assigned' && (!untouchedOnly || (t.updated || 0) <= (t.assignedAt || 0)))
     const least = (list) => list.slice().sort((a, b) => counts.get(a.soeid) - counts.get(b.soeid) || a.person.name.localeCompare(b.person.name))[0]
     const moves = []
     for (const t of movable.filter((x) => !inPool.has(x.to))) {
@@ -332,9 +334,9 @@
     }
     return { moves, pool }
   }
-  function rebalancePreview(now = Date.now()) {
+  function rebalancePreview(now = Date.now(), untouchedOnly = false) {
     const v = view()
-    return rebalancePlan({ tickets: v.tickets, people: scheduledToday(now), now, load: (s) => loadToday(s, now, v.tickets).total })
+    return rebalancePlan({ tickets: v.tickets, people: scheduledToday(now), now, load: (s) => loadToday(s, now, v.tickets).total, untouchedOnly })
   }
   async function rebalance() {
     const handed = await handOut(null)
@@ -358,17 +360,29 @@
   // After every render (new data arrives every 15 s), if there are unassigned tickets and
   // someone on shift can take them, hand them out. One attempt at a time per browser,
   // at most every 10 s; the log's first-assignment-wins rule absorbs two browsers racing.
+  // Then even things out (lead, 2026-11-19): when someone scheduled today has 2+ more tickets
+  // than someone else, untouched tickets (still Assigned and not updated in ServiceNow since
+  // Scope gave them out) move to whoever has the fewest. Tickets of people not working today
+  // (leave, rest day) move too. Every move records its reason; Rebalance stays as a button.
   let autoBusy = false; let autoLast = 0
   S.after(() => {
     if (autoBusy || !qm.online || !qm.me() || Date.now() - autoLast < 10e3) return
     const v = view()
     if (v.settings.autoHandout === false || v.settings.autoHandout === 'false') return
-    if (!v.tickets.some((t) => t.inLatest && !t.to && !owner(t) && t.tag === 'Assigned')) return
     const now = Date.now()
-    if (!plan({ tickets: v.tickets, people: scheduledToday(now), settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return
+    const people = scheduledToday(now)
+    const waiting = v.tickets.some((t) => t.inLatest && !t.to && !owner(t) && t.tag === 'Assigned') &&
+      plan({ tickets: v.tickets, people, settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length > 0
+    const even = !waiting && rebalancePreview(now, true).moves
+    if (!waiting && !(even && even.length)) return
     autoBusy = true; autoLast = now
-    handOut(null).then((p) => { if (p.list.length) S.dispatch({ type: 'toast', text: `Handed out ${p.list.length} new ticket${p.list.length > 1 ? 's' : ''} automatically` }) }).finally(() => { autoBusy = false })
+    const run = waiting
+      ? handOut(null).then((p) => { if (p.list.length) S.dispatch({ type: 'toast', text: `Handed out ${p.list.length} new ticket${p.list.length > 1 ? 's' : ''} automatically` }) })
+      : qm.send({ type: 'ticketsAssigned', override: true, list: even.map(({ n, to, reason }) => ({ n, to, reason: `${reason} (automatic)` })) })
+        .then((ok) => { if (ok) S.dispatch({ type: 'toast', text: `Evened out: moved ${even.length} untouched ticket${even.length > 1 ? 's' : ''}` }) })
+    run.finally(() => { autoBusy = false })
   })
+
 
   // ---------- "Assigned to you": toast + sound ----------
   // When a ticket becomes mine (automatic hand-out, a rebalance or someone moving it to me),

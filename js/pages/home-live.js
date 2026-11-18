@@ -67,20 +67,21 @@
     const pool = rows.filter((r) => r.inPool)
     const spread = pool.length ? Math.max(...pool.map((r) => r.l.total)) - Math.min(...pool.map((r) => r.l.total)) : 0
     const max = Math.max(1, ...rows.map((r) => r.assigned))
-    const rb = lead ? Q().rebalancePreview(m.now) : { moves: [] }
+    const rb = Q().rebalancePreview(m.now)
     const auto = m.v.settings.autoHandout !== false && m.v.settings.autoHandout !== 'false'
     const work = rb.moves.length + (pool.length ? m.unassigned : 0)
     return html`<div class="card">
       <div class="card-h" style="flex-wrap:nowrap">
         <h2 style="white-space:nowrap">Tickets per person today</h2>
-        ${lead && html`<button class="btn sm" data-click="live.rebalance" ${attrs({ disabled: !work, title: `${spread <= 1 ? 'Balanced' : 'Uneven'}: spread ${spread} (highest minus lowest today, among people getting tickets). ${work ? `${rb.moves.length} to move${m.unassigned && pool.length ? `, ${m.unassigned} to hand out` : ''}` : 'Already even.'}` })}>${icon('swap', 14)}Rebalance${work > 0 && html` <b class="num">${work}</b>`}</button>`}
+        ${html`<button class="btn sm" data-click="live.rebalance" ${attrs({ disabled: !work, title: `${spread <= 1 ? 'Balanced' : 'Uneven'}: spread ${spread} (highest minus lowest today, among people getting tickets). ${work ? `${rb.moves.length} to move${m.unassigned && pool.length ? `, ${m.unassigned} to hand out` : ''}` : 'Already even.'}` })}>${icon('swap', 14)}Rebalance${work > 0 && html` <b class="num">${work}</b>`}</button>`}
         <span class="spacer"></span>
         ${S.infoTip('live-fair', 'Equal distribution', html`
           <span>Each row shows <b>done / assigned</b> today. <b>Assigned</b>: tickets that became theirs today. <b>Done</b>: those that are tagged Resolved or Transferred, or have left the ServiceNow export. Faded rows aren't getting tickets right now (hover a name to see why).</span>
           <span>Tickets are shared equally among <b>everyone scheduled to work today</b> in Team Management (a shift set, not on leave, not a rest day), whether or not they have signed in yet. Each new ticket goes to whoever has <b>the fewest tickets today</b> (assigned + verified manual entries). Ties go to whoever got one least recently.</span>
           <span>${auto ? html`<b>Automatic:</b> new tickets are handed out as soon as they load, so nobody presses a button.` : html`Automatic hand-out is <b>off</b> in Team settings, so use Rebalance or Hand out.`}</span>
           <span><b>EERS</b> tickets go to today's Proci Backup. Tickets ServiceNow already assigned to an active team member count for that person and are never moved.</span>
-          <span><b>Rebalance</b> (leads) hands out anything waiting, moves untouched tickets (tag Assigned) off people who aren't working today (leave, rest day), then evens out today's counts until the spread is 1 or less. Every move records its reason.</span>`)}
+          <span><b>Evens out by itself:</b> when someone has 2 or more tickets more than someone else today, Scope moves <b>untouched</b> tickets (still Assigned, not updated in ServiceNow since Scope gave them out) to whoever has the fewest. Tickets of people not working today (leave, rest day) move too.</span>
+          <span><b>Rebalance</b> (anyone) does the same on demand and can also move tickets that were updated in ServiceNow but are still tagged Assigned. Every move records its reason.</span>`)}
       </div>
       <div class="card-b stack" style="gap:10px">
         ${m.unassigned > 0 && html`<div class="callout warn small">${icon('user', 16)}<span><b>${m.unassigned} waiting.</b> ${pool.length ? (auto ? 'Handing them out…' : 'Rebalance or Hand out to share them.') : Q().waitingReason(m.v, m.now)}</span></div>`}

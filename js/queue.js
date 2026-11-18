@@ -8,7 +8,7 @@
 //    replaces what we have when its sys_updated_on is newer. The description is
 //    read once for the EERS keywords and never stored (it's full of personal data).
 //  - Assignment: the moment tickets load, EERS tickets go to today's Proci Backup and
-//    the rest to whoever has handled the fewest tickets today, among everyone scheduled
+//    the rest to whoever holds the fewest open tickets, among everyone scheduled
 //    to work today (lead, 2026-11-19; signed in or not). Every assignment carries its
 //    reason. ServiceNow's "assigned to" doesn't decide it: every ticket is shared out.
 //    With "Hand out automatically" on (Team settings), any open browser hands out new
@@ -226,8 +226,13 @@
     }).filter((p) => p.ok).sort((a, b) => a.person.name.localeCompare(b.person.name))
   }
   const startOfDay = (now) => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() }
+  // What each person holds now: open tickets on them (Assigned or On Hold), whatever day
+  // they got them. Distribution and rebalancing even THIS out (lead, 2026-11-19: "all
+  // tickets must be evenly distributed"), so tickets carried over from earlier days count.
+  const openLoad = (soeid, tickets = view().tickets) => tickets.filter((x) => isOpen(x) && owner(x) === soeid).length
   // Handled today = tickets that became theirs today (any tag, Transferred included)
-  // plus verified manual entries handled today (D12).
+  // plus verified manual entries handled today (D12). Shown as "+N new today"; no longer
+  // what distribution balances on.
   function loadToday(soeid, now = Date.now(), tickets = view().tickets) {
     const from = startOfDay(now)
     const t = tickets.filter((x) => owner(x) === soeid && (x.to ? x.assignedAt : x.firstSeen) >= from).length
@@ -266,11 +271,11 @@
       let who; let why
       if (t.eers && backups.length) {
         who = pick(backups)
-        why = `EERS (${t.eers}) → Proci Backup, fewest handled today (${counts.get(who.soeid)})`
+        why = `EERS (${t.eers}) → Proci Backup, who had ${counts.get(who.soeid)} open`
       } else {
         const list = regular.length ? regular : pool
         who = pick(list)
-        if (who) why = `${t.eers ? `EERS (${t.eers}), but no Proci Backup on shift. ` : ''}Fewest handled today (${counts.get(who.soeid)}) of ${list.length} on shift`
+        if (who) why = `${t.eers ? `EERS (${t.eers}), but no Proci Backup on shift. ` : ''}Fewest open tickets (${counts.get(who.soeid)}) of ${list.length} on shift`
       }
       if (!who) { left.push(t); continue }
       if (t.sn) { const m = snMember(t); if (!m || m.soeid !== who.soeid) why += m ? `. In ServiceNow it's with ${m.name}: reassign it there` : '. In ServiceNow it\'s assigned to someone not on the active team: reassign it there' }
@@ -283,7 +288,7 @@
   async function handOut(importId) {
     const now = Date.now()
     const v = view()
-    const p = plan({ tickets: v.tickets, people: scheduledToday(now), settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total })
+    const p = plan({ tickets: v.tickets, people: scheduledToday(now), settings: v.settings, now, load: (s) => openLoad(s, v.tickets) })
     if (!p.list.length) return p
     for (let k = 0; k < p.list.length; k += 300) {
       if (!(await qm.send({ type: 'ticketsAssigned', importId: importId || null, list: p.list.slice(k, k + 300) }))) break
@@ -295,9 +300,8 @@
   // Pure. Two kinds of move, both only for tickets Scope assigned that are still tagged
   // Assigned (On Hold means someone is working it; ServiceNow-assigned ones stay put):
   //  1. Off people who no longer get tickets (past cutoff, signed out, on leave).
-  //  2. From whoever handled the most today to whoever handled the fewest, until the
-  //     gap is 1 or less. Only tickets handed out today move here, so each move takes
-  //     one off the giver's count and adds one to the receiver's.
+  //  2. From whoever holds the most open tickets to whoever holds the fewest, until the
+  //     gap is 1 or less. Any day's tickets can move (still Assigned, not EERS).
   // EERS tickets only move to a Proci Backup.
   // untouchedOnly (the automatic even-out): also skip any ticket updated in ServiceNow since
   // Scope gave it out, so a ticket someone has started on stays with them.
@@ -306,14 +310,13 @@
     const inPool = new Set(pool.map((p) => p.soeid))
     const counts = new Map(pool.map((p) => [p.soeid, load(p.soeid)]))
     const backups = pool.filter((p) => p.duty === 'PROCI_BACKUP')
-    const from = startOfDay(now)
     const movable = tickets.filter((t) => t.inLatest && t.to && t.tag === 'Assigned' && (!untouchedOnly || (t.updated || 0) <= (t.assignedAt || 0)))
     const least = (list) => list.slice().sort((a, b) => counts.get(a.soeid) - counts.get(b.soeid) || a.person.name.localeCompare(b.person.name))[0]
     const moves = []
     for (const t of movable.filter((x) => !inPool.has(x.to))) {
       const who = least(t.eers && backups.length ? backups : pool)
       if (!who) break
-      moves.push({ n: t.n, from: t.to, to: who.soeid, reason: `Rebalanced: ${nameOf(t.to)} no longer gets tickets; ${who.person.name} had handled the fewest today (${counts.get(who.soeid)})` })
+      moves.push({ n: t.n, from: t.to, to: who.soeid, reason: `Rebalanced: ${nameOf(t.to)} no longer gets tickets; ${who.person.name} had the fewest open (${counts.get(who.soeid)})` })
       counts.set(who.soeid, counts.get(who.soeid) + 1)
     }
     const moved = new Set(moves.map((m) => m.n))
@@ -323,9 +326,9 @@
       const hi = sorted.find((p) => !stuck.has(p.soeid))
       const lo = sorted[sorted.length - 1]
       if (!hi || hi === lo || counts.get(hi.soeid) - counts.get(lo.soeid) <= 1) break
-      const t = movable.filter((x) => x.to === hi.soeid && !moved.has(x.n) && !x.eers && x.assignedAt >= from).sort((a, b) => (b.p || 9) - (a.p || 9) || b.assignedAt - a.assignedAt)[0]
+      const t = movable.filter((x) => x.to === hi.soeid && !moved.has(x.n) && !x.eers).sort((a, b) => (b.p || 9) - (a.p || 9) || b.assignedAt - a.assignedAt)[0]
       if (!t) { stuck.add(hi.soeid); continue } // nothing of theirs can move; look at the next person
-      moves.push({ n: t.n, from: hi.soeid, to: lo.soeid, reason: `Rebalanced: ${hi.person.name} had handled ${counts.get(hi.soeid)} today, ${lo.person.name} ${counts.get(lo.soeid)}` })
+      moves.push({ n: t.n, from: hi.soeid, to: lo.soeid, reason: `Rebalanced: ${hi.person.name} had ${counts.get(hi.soeid)} open, ${lo.person.name} ${counts.get(lo.soeid)}` })
       moved.add(t.n)
       counts.set(hi.soeid, counts.get(hi.soeid) - 1)
       counts.set(lo.soeid, counts.get(lo.soeid) + 1)
@@ -334,7 +337,7 @@
   }
   function rebalancePreview(now = Date.now(), untouchedOnly = false) {
     const v = view()
-    return rebalancePlan({ tickets: v.tickets, people: scheduledToday(now), now, load: (s) => loadToday(s, now, v.tickets).total, untouchedOnly })
+    return rebalancePlan({ tickets: v.tickets, people: scheduledToday(now), now, load: (s) => openLoad(s, v.tickets), untouchedOnly })
   }
   async function rebalance() {
     const handed = await handOut(null)
@@ -343,7 +346,7 @@
     // Still uneven after moving: say why the rest can't move.
     const now = Date.now(); const v = view()
     const people = scheduledToday(now)
-    const counts = people.map((x) => loadToday(x.soeid, now, v.tickets).total)
+    const counts = people.map((x) => openLoad(x.soeid, v.tickets))
     const spread = counts.length ? Math.max(...counts) - Math.min(...counts) : 0
     const why = !people.length ? 'Nobody is scheduled to work today.'
       : spread > 1 ? "The rest can't move: they're On Hold, EERS with the Proci Backup, or verified manual entries, which stay with their person." : ''
@@ -357,7 +360,7 @@
     if (v.settings.autoHandout === false || v.settings.autoHandout === 'false') return 'Automatic hand-out is off in Team settings. Use Hand out in Team queue.'
     const on = scheduledToday(now)
     if (!on.length) return 'Nobody is scheduled to work today. Set shifts in Team Management → Schedule & coverage.'
-    if (!plan({ tickets: v.tickets, people: on, settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return 'Nobody scheduled today takes these tickets: check "Main Proci gets regular tickets" and "Proci Backup gets regular tickets too" in Team settings.'
+    if (!plan({ tickets: v.tickets, people: on, settings: v.settings, now, load: (s) => openLoad(s, v.tickets) }).list.length) return 'Nobody scheduled today takes these tickets: check "Main Proci gets regular tickets" and "Proci Backup gets regular tickets too" in Team settings.'
     return 'Handing them out now…'
   }
 
@@ -377,7 +380,7 @@
     const now = Date.now()
     const people = scheduledToday(now)
     const waiting = v.tickets.some((t) => t.inLatest && !t.to && !owner(t) && t.tag === 'Assigned') &&
-      plan({ tickets: v.tickets, people, settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length > 0
+      plan({ tickets: v.tickets, people, settings: v.settings, now, load: (s) => openLoad(s, v.tickets) }).list.length > 0
     const even = !waiting && rebalancePreview(now, true).moves
     if (!waiting && !(even && even.length)) return
     autoBusy = true; autoLast = now

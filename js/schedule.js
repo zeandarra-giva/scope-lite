@@ -485,6 +485,22 @@
     if (S.queue) {
       const v = S.queue.view()
       const open = v.tickets.filter(S.queue.isOpen)
+      // Upload reminder (QM duty): once the export is older than the reminder, today's
+      // Proci Backup (Weekend Support at the weekend) and the leads are told first; once it is
+      // older than twice the reminder (Stale), everyone is.
+      const ih = S.queue.importHealth(v, now)
+      if (v.latest && ih.tone !== 'good') {
+        const r = R().dayRoles(today)
+        const qmOwner = r.weekend || r.backup
+        const stale = ih.tone === 'crit'
+        if (stale || lead || me.soeid === qmOwner) {
+          const mins = Math.floor(ih.age / 60e3)
+          const ago = mins < 120 ? `${mins} min` : mins < 2880 ? `${Math.floor(mins / 60)} h` : `${Math.floor(mins / 1440)} days`
+          const who = me.soeid === qmOwner ? 'You own QM today: load' : qmOwner ? `${first(qmOwner)} owns QM today. Anyone can load` : 'Load'
+          // The id changes with each load and once more when the data turns Stale, so the bell rings again.
+          out.push({ id: `upload|${v.latest.at}|${ih.tone}`, group: 'action', kind: 'sla', tone: stale ? 'crit' : 'warn', title: `ServiceNow data is ${stale ? 'stale' : 'due'}: last loaded ${ago} ago`, sub: `${who} a fresh export (reminder every ${v.settings.uploadReminder} min)`, at: now - 19, page: 'home' })
+        }
+      }
       const waiting = open.filter((t) => !S.queue.owner(t) && !t.sn)
       if (waiting.length) out.push({ id: `wait|${waiting.map((t) => t.n).join(',')}`, group: 'action', kind: 'assign', tone: 'warn', title: `${waiting.length} ticket${waiting.length > 1 ? 's' : ''} waiting for someone on shift`, sub: 'They go out automatically when someone signs in', at: now - 20, page: 'home' })
       const late = open.filter((t) => S.queue.health(t, v.settings, now).slaBreached && (lead || S.queue.owner(t) === me.soeid))

@@ -10,7 +10,7 @@ All data is generated sample data. ServiceNow and SSO are simulated. The source 
 
 1. Download or clone this folder anywhere (Desktop is fine).
 2. Double-click **`run.bat`**.
-3. Your browser opens at `http://127.0.0.1:8080`. Pick **Solution Center**, select your name from the team roster and sign in. Your role (Proci rota) and shift (Schedule & coverage) come from Team Management, so there's nothing to pick. Leads get the Manager view. Without the server or a roster, Scope can't sign anyone in.
+3. Your browser opens at `http://127.0.0.1:8080`. Scope opens straight into **Solution Center** (the workspace picker is off for now). Select your name from the team roster and sign in. Your role (Proci rota) and shift (Schedule & coverage) come from Team Management, so there's nothing to pick. Leads get the Manager view. Without the server or a roster, Scope can't sign anyone in.
 
 ### Roles
 
@@ -56,7 +56,7 @@ Managers can vote, comment, move a suggestion through **New → Reviewing → Pl
    - **EERS** tickets (the EERS keywords, by default "EERS", "entitlement", "entitlements") go to today's **Proci Backup**;
    - every other ticket goes to whoever has **handled the fewest tickets today** (tickets that became theirs today plus verified manual entries), highest priority and oldest first;
    - tickets already assigned in ServiceNow are skipped and count for that person;
-   - each assignment shows **why** it went to that person. A lead can move a ticket. **Undo this load** takes a load back.
+   - each assignment shows **why** it went to that person. Anyone can move a ticket to someone else from the owner dropdown in Home → Team queue (or the ticket drawer); every move is logged with who did it. **Undo this load** takes a load back.
 3. **My tickets** (Queue Management) is your working view: the tickets still Assigned to you, longest untouched first. Set each one's **status** from the dropdown: **On Hold** (waiting on the user) moves it to the **3-Strike** queue, **Transferred** takes it off your list (still counts as handled), and **Resolved** opens the resolution journey first. Home's **Team queue** lists everyone's, and **Shift handover** drafts a summary to copy.
    - **3-Strike:** Home → 3-Strike lists every On Hold ticket with its strike (read from Scope's log and "Contact attempt1/2/3" in the short description). Each day Scope suggests who makes each due attempt, spread evenly over everyone on shift; the **Proci Backup** (Weekend Support at the weekend, or a lead) adjusts it and clicks **Approve distribution**. Each analyst then works their attempts in Queue Management → **3-Strike**: **Reached** sends the ticket back to its owner, **Not reached** logs the strike, and Strike 3 not reached tags it Resolved (set it Resolved in ServiceNow too). Until the team confirms Q19, the first attempt is due the day after the ticket goes On Hold and nothing is due at the weekend.
 4. **Log a manual entry** (Queue Management → My manual entries) for an INC you handled that wasn't assigned to you: INC number, date and time handled, actions taken, reason. A lead **verifies** it (credited) or **rejects** it with a note; until then you can withdraw it. Leads get **To verify** and **All manual entries** on Home (credit per person, **Export for Excel**). A lead can't verify their own.
@@ -76,6 +76,10 @@ Managers can vote, comment, move a suggestion through **New → Reviewing → Pl
 **Home** on real data is for watching the queue: open incidents (P1, P2, EERS), queue health (share within SLO, past SLO / SLA, backlog), tickets waiting for someone, who is on shift, loading the ServiceNow export (with how old the data is), and, under the cards, two columns: the team tabs on the left (Team queue, Shift handover, To verify, All manual entries) and, stacked on the right, **Today's schedule** (every member, signed in or not, with today's role and shift as tags) and **Tickets per person today** (per person: assigned today, how many of those are done, everything still open on them, with **Rebalance**). **Roster & access** shows the real roster (edit `data\roster.json` on the host to change it). The **Password vault** tab is hidden on real data: Scope doesn't store secrets.
 
 The header's **ServiceNow import** pill shows the health of the loaded export: Healthy while it's younger than the upload reminder (45 min), Due up to twice that, then Stale, plus open, P1 and waiting counts. Drop a CSV on it to load it on Home; **Open Team queue** goes to Home's Team queue.
+
+**Monthly report** (Reports, on real data): tickets received per day, the average per day and how they were spread across the team; per person received, handled (Resolved + Transferred + verified manual entries), transferred, EERS, manual entries, 3-Strike attempts, days worked, tickets per day worked and days as Main / Backup / Weekend Support. **Export for Excel**. A lead can import QueueManager's end-of-day history (CSV exports of `tbl_EODReports`, `tbl_DaySessions` and `tbl_Members`) so earlier months aren't empty.
+
+**Upload reminder:** once the loaded export is older than the reminder in Team settings, the bell tells today's Proci Backup (Weekend Support at the weekend) and the leads; once it's twice that (Stale), everyone.
 
 **Team settings** (Team Management → Team settings) hold what the whole team follows: SLA/SLO targets for regular INC and EERS, the backlog time, shift times and the cutoff, EERS keywords, whether the Main Proci and the Proci Backup also get regular tickets, the upload reminder and the time zone of the export's dates. Everyone can read them; only a lead can change them, and every change is listed with who and when.
 
@@ -106,6 +110,7 @@ js/suggest.js           Suggestions board
 js/qm.js                Queue Management page, ops log, sign-in identity, manual INC entries
 js/queue.js             ServiceNow import, automatic assignment, My tickets, team settings
 js/strike.js            3-Strike: the On Hold follow-up queue, daily distribution and attempts
+js/report-live.js       monthly transparency report and the QueueManager history import
 js/rota.js              Proci rota: weekly Proci list → daily roles, leave and succession
 js/schedule.js          real Schedule & coverage, Attendance, sign-in auto-fill, guarded role/shift change
 tools/                  check.mjs (headless-Chrome check), make-mock-export.mjs, make-sample-incidents.mjs (fake exports)

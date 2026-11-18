@@ -114,7 +114,7 @@
           const t = a && tickets.get(a.n)
           const target = a && qm.roster.find((p) => p.soeid === a.to)
           if (!t || !target) continue
-          if (t.to && !(e.override && isLead(ev.by))) continue // first assignment wins; only a lead moves a ticket
+          if (t.to && !(e.override && qm.roster.some((p) => p.soeid === ev.by))) continue // first assignment wins; anyone on the roster can move a ticket (lead, 2026-11-19)
           t.history.push({ what: t.to ? `moved from ${nameOf(t.to)} to ${target.name}` : `assigned to ${target.name}`, by: ev.by, at: ev.at, note: a.reason || '' })
           Object.assign(t, { to: a.to, assignedAt: ev.at, reason: a.reason || '', assignedBy: ev.by })
         }
@@ -444,6 +444,8 @@
   const imp = () => S.ui('p:qm:import', { open: false, busy: false, error: null, preview: null, last: null, drag: false })
   const fmtWhen = (ms) => (ms ? new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—')
   const fmtAgo = (ms) => { const m = Math.round(ms / 60e3); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.floor(m / 1440)} days` }
+  const ageShort = (ms) => { const m = Math.max(0, Math.round(ms / 60e3)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.floor(m / 60)} h` : `${Math.floor(m / 1440)} d` }
+  const fmtShort = (ms) => (startOfDay(ms) === startOfDay(Date.now()) ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))
   const tagPill = (tag) => html`<span class="${cls('pill', TAG_TONE[tag])}">${tag}</span>`
   function healthPills(t, s) {
     const h = health(t, s)
@@ -460,6 +462,17 @@
     return html`<span class="pill warn">Unassigned</span>`
   }
 
+  // Team queue: anyone can move an open ticket to someone else (lead, 2026-11-19).
+  // Every move is logged on the ticket with who did it.
+  const ownerPick = (t) => {
+    const o = owner(t)
+    const people = qm.roster.filter((p) => p.active !== false || p.soeid === o)
+    return html`<select class="in sm owner-sel" aria-label="Owner of ${t.n}" title="Move ${t.n} to someone else" data-change="queue.reassign" data-v="${t.n}">
+        ${!o && html`<option value="" selected>${t.sn ? `${t.sn} (not on roster)` : 'Unassigned'}</option>`}
+        ${people.map((p) => html`<option value="${p.soeid}" ${attrs({ selected: p.soeid === o })}>${p.name}</option>`)}
+      </select>${o && !t.to && html`<div class="muted small" title="Assigned in ServiceNow">(ServiceNow)</div>`}`
+  }
+
   // ---------- My tickets (D13) ----------
   // My tickets: a plain table of what I still have to work, longest untouched first.
   // Setting a status moves it out: On Hold → the 3-Strike queue (Home), Transferred out,
@@ -473,18 +486,39 @@
       : html`<div class="empty">${!v.latest ? 'No tickets yet. They appear here once someone loads the ServiceNow export on Home.' : 'Nothing open on you.'}</div>`
   }
 
-  function ticketTable(list, s, { mine = false, compact = false } = {}) {
+  function ticketTable(list, s, { mine = false, compact = false, byAnalyst = false } = {}) {
     const sel = S.ui('p:qm').tsel
-    // Home's narrower column: ticket + description together; tag and state live in the drawer.
-    if (compact) return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl qm-compact">
-      <thead><tr><th>Ticket</th><th>Priority</th><th>Owner</th><th>Untouched</th></tr></thead>
-      <tbody>${list.map((t) => html`<tr data-key="${t.n}" class="${cls(sel === t.n && 'sel', !t.inLatest && 'muted')}">
-        <td class="qm-tcell"><div class="row tight nowrap"><button class="btn ghost sm mono" data-click="queue.open" data-v="${t.n}">${t.n}</button>${eersPill(t)}</div>
+    // Home → Team queue: QueueManager's columns (Ticket # with its description, Priority,
+    // Queue, Total age, Queue age, Assigned at, Tag), plus the owner, which anyone can change.
+    // Notes are left out of the table for now (they're in the drawer, and resolution notes
+    // come from the resolution journey). byAnalyst groups the rows under each owner.
+    if (compact) {
+      const now = Date.now()
+      const row = (t) => html`<tr data-key="${t.n}" class="${cls(sel === t.n && 'sel', !t.inLatest && 'muted')}">
+        <td class="qm-tcell"><div class="row tight nowrap"><button class="btn ghost sm mono" data-click="queue.open" data-v="${t.n}">${t.n}</button></div>
           <div class="small ink2 qm-tdesc" title="${t.short}">${t.short || html`<span class="muted">(no short description)</span>`}</div></td>
         <td class="nowrap">${t.p ? html`<span class="${cls('prio', `P${t.p}`)}" title="${t.priority}">P${t.p}</span>` : t.priority}</td>
-        <td><div>${ownerCell(t)}</div>${t.inLatest && t.tag !== 'Assigned' && html`<div>${tagPill(t.tag)}</div>`}${!t.inLatest && html`<div class="small muted">Left the queue</div>`}</td>
-        <td>${t.inLatest && OPEN_TAGS.includes(t.tag) ? healthPills(t, s) : html`<span class="muted small">—</span>`}</td>
-      </tr>`)}</tbody></table></div>`
+        <td class="tq-queue">${t.eers ? eersPill(t) : html`<span class="small ink2" title="${t.group}">${t.group || '—'}</span>`}</td>
+        <td>${t.inLatest && OPEN_TAGS.includes(t.tag) && qm.me() ? ownerPick(t) : html`<div>${ownerCell(t)}</div>`}</td>
+        <td class="nowrap small" title="Since the ticket was opened: ${fmtWhen(t.opened)}">${t.opened ? ageShort(now - t.opened) : '—'}</td>
+        <td class="nowrap small" title="Since it first came into the queue (Scope's first export with it): ${fmtWhen(t.firstSeen)}">${t.firstSeen ? ageShort(now - t.firstSeen) : '—'}</td>
+        <td class="nowrap small">${t.to ? html`<span title="${fmtWhen(t.assignedAt)}">${fmtShort(t.assignedAt)}</span>` : t.sn ? html`<span class="muted" title="Assigned in ServiceNow before it reached Scope">ServiceNow</span>` : '—'}</td>
+        <td class="tq-tag"><span class="row tight" style="flex-wrap:nowrap">${t.inLatest ? tagPill(t.tag) : html`<span class="pill" title="Not in the latest export: closed or moved to another group in ServiceNow">Left the queue</span>`}
+          ${t.inLatest && OPEN_TAGS.includes(t.tag) && healthPills(t, s)}</span></td>
+      </tr>`
+      let body
+      if (byAnalyst) {
+        const groups = new Map()
+        for (const t of list) { const o = owner(t) || (t.sn ? `sn:${t.sn}` : ''); if (!groups.has(o)) groups.set(o, []); groups.get(o).push(t) }
+        const label = (k) => (!k ? 'Unassigned' : k.startsWith('sn:') ? `${k.slice(3)} (not on the roster)` : nameOf(k))
+        const keys = [...groups.keys()].sort((a, b) => (!a) - (!b) || label(a).localeCompare(label(b)))
+        body = keys.map((k) => html`<tr class="tq-grp" data-key="grp-${k || 'none'}"><td colspan="8"><span class="row tight">${k && !k.startsWith('sn:') ? html`<span class="avatar xs">${S.initials(label(k))}</span>` : ''}<b>${label(k)}</b><span class="muted small">${groups.get(k).length} ticket${groups.get(k).length > 1 ? 's' : ''}</span></span></td></tr>
+          ${groups.get(k).map(row)}`)
+      } else body = list.map(row)
+      return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl qm-compact">
+      <thead><tr><th>Ticket #</th><th>Priority</th><th>Queue</th><th>Owner</th><th>Total age</th><th>Queue age</th><th>Assigned at</th><th>Tag</th></tr></thead>
+      <tbody>${body}</tbody></table></div>`
+    }
     return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl">
       <thead><tr><th>INC</th><th>Short description</th><th>Priority</th>${!mine && html`<th>Owner</th>`}<th>${mine ? 'Status' : 'Tag'}</th><th>Untouched</th><th>ServiceNow state</th></tr></thead>
       <tbody>${list.map((t) => html`<tr data-key="${t.n}" class="${cls(sel === t.n && 'sel', !t.inLatest && 'muted')}">
@@ -503,7 +537,6 @@
     const v = view()
     const o = owner(t)
     const canTag = me && (me.soeid === o || me.accessRole === 'Lead')
-    const lead = me && me.accessRole === 'Lead'
     const u = S.ui('p:qm')
     S.drawer({
       className: 'qm-drawer',
@@ -529,7 +562,7 @@
           <div class="row tight">${TAGS.map((g) => html`<button class="${cls('btn sm', t.tag === g && 'primary')}" data-click="${g === 'Resolved' && S.liveResolve ? 'lres.open' : 'queue.tag'}" data-v="${t.n}" data-t="${g}" ${attrs({ 'aria-pressed': String(t.tag === g) })}>${g === 'Resolved' && S.liveResolve ? html`${icon('check', 13)}Resolve with code` : g}</button>`)}</div>
           <span class="muted small">Resolving walks you through the resolution journey and gives the ticket a resolution code to copy into ServiceNow. Transferred still counts as handled.</span>
         </div>`}
-        ${lead && html`<div class="stack" style="gap:8px">
+        ${me && t.inLatest && html`<div class="stack" style="gap:8px">
           <span class="eyebrow">Move to someone else</span>
           <div class="row tight">
             <select class="in" aria-label="New owner" data-change="queue.moveTo">
@@ -679,9 +712,10 @@
           <select class="in" aria-label="Show" data-change="queue.qshow" title="All: every open ticket · Assigned: being worked (not On Hold) · Backlog: untouched since before ${v.settings.backlogHour} · Priority: P1 and P2 · SLO breach: untouched longer than the SLO">
             ${[['all', 'All'], ['assigned', 'Assigned'], ['backlog', 'Backlog'], ['priority', 'Priority'], ['slo', 'SLO Breach']].map(([k, l]) => html`<option value="${k}" ${attrs({ selected: u.show === k })}>${l}</option>`)}
           </select>
+          <label class="row tight small nowrap tq-by"><input type="checkbox" data-change="queue.byAnalyst" ${attrs({ checked: !!u.byAnalyst })}>View by analyst</label>
           ${unassigned.length > 0 && html`<button class="btn sm primary" data-click="queue.handout">${icon('send', 14)}Hand out ${unassigned.length} now</button>`}
         </div>
-        ${list.length ? ticketTable(list, v.settings, { compact: true }) : html`<div class="empty">${v.latest ? 'Nothing matches.' : 'No export loaded yet. Use Import data in the header.'}</div>`}
+        ${list.length ? ticketTable(list, v.settings, { compact: true, byAnalyst: !!u.byAnalyst }) : html`<div class="empty">${v.latest ? 'Nothing matches.' : 'No export loaded yet. Use Import data in the header.'}</div>`}
       </div>`
   }
 
@@ -804,7 +838,7 @@
   }
 
   // ---------- Exports ----------
-  S.queue = { workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
+  S.queue = { parseCsv, readText, workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
     _test: { parseCsv, normalise, parseWhen, eersMatch, fold, shiftWindow, rebalancePlan } }
 
   // Loading the export lives on Home; the ticket list on Queue Management → Team queue.
@@ -815,6 +849,7 @@
   const page = () => S.ui('p:qm')
   S.on({
     'queue.qshow': (el) => S.set(S.ui('p:qm:queue'), { show: el.value }),
+    'queue.byAnalyst': (el) => S.set(S.ui('p:qm:queue'), { byAnalyst: el.checked }),
     'queue.q': (el) => S.set(S.ui('p:qm:queue'), { q: el.value }),
     'queue.open': (el) => S.set(page(), { tsel: el.dataset.v, tnote: '', moveTo: '' }),
     'queue.close': () => S.set(page(), { tsel: null }),
@@ -834,6 +869,13 @@
       if (p.moveTo && await qm.send({ type: 'ticketsAssigned', override: true, list: [{ n: el.dataset.v, to: p.moveTo, reason: `Moved by ${nameOf((qm.me() || {}).soeid)}` }] })) {
         S.dispatch({ type: 'toast', text: `${el.dataset.v} moved to ${nameOf(p.moveTo)}` }); S.set(p, { moveTo: '' })
       }
+    },
+    'queue.reassign': async (el) => {
+      const n = el.dataset.v
+      const t = view().tickets.find((x) => x.n === n)
+      if (!t || !el.value || el.value === owner(t)) return
+      if (await qm.send({ type: 'ticketsAssigned', override: true, list: [{ n, to: el.value, reason: `Moved by ${nameOf((qm.me() || {}).soeid)}` }] })) S.dispatch({ type: 'toast', text: `${n} moved to ${nameOf(el.value)}` })
+      else S.render()
     },
     'queue.file': (el) => { readFile(el.files && el.files[0]); el.value = '' },
     'queue.dragover': (el, ev) => { ev.preventDefault(); if (!imp().drag) S.set(imp(), { drag: true }) },

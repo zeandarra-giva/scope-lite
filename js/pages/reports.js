@@ -19,6 +19,8 @@
   }
 
   S.pages.reports = function Reports() {
+    // On real team data: the monthly transparency report (report-live.js).
+    if (S.reportLive && S.schedule && S.schedule.real() && S.qm.me()) return S.reportLive()
     const u = pageUi()
     return html`
       <div class="row">

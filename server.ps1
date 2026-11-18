@@ -31,8 +31,8 @@ if (-not (Test-Path $DataFile)) { [System.IO.File]::WriteAllText($DataFile, '', 
 $OpsFile = Join-Path $DataDir 'ops.jsonl'
 $RosterFile = Join-Path $DataDir 'roster.json'
 # Event types the ops log accepts so far, and the ones only a Lead may send.
-$OpsTypes = @('manualIncAdd', 'manualIncWithdraw', 'manualIncDecide', 'shiftStart', 'settingsSet', 'ticketsImported', 'ticketsAssigned', 'ticketTag', 'ticketNote', 'importUndo', 'rotaSet', 'leaveAdd', 'leaveCancel', 'shiftPlanSet', 'shiftDaySet', 'rotaOrderSet', 'strikeAssign', 'strikeLog')
-$LeadOnly = @('manualIncDecide', 'settingsSet', 'rotaSet', 'shiftPlanSet', 'rotaOrderSet') # shiftDaySet: anyone for their own day (the fold checks)
+$OpsTypes = @('manualIncAdd', 'manualIncWithdraw', 'manualIncDecide', 'shiftStart', 'settingsSet', 'ticketsImported', 'ticketsAssigned', 'ticketTag', 'ticketNote', 'importUndo', 'rotaSet', 'leaveAdd', 'leaveCancel', 'shiftPlanSet', 'shiftDaySet', 'rotaOrderSet', 'strikeAssign', 'strikeLog', 'eodHistoryImported', 'eodHistoryUndo')
+$LeadOnly = @('manualIncDecide', 'settingsSet', 'rotaSet', 'shiftPlanSet', 'rotaOrderSet', 'eodHistoryImported', 'eodHistoryUndo') # shiftDaySet: anyone for their own day (the fold checks)
 if (-not (Test-Path $OpsFile)) { [System.IO.File]::WriteAllText($OpsFile, '', $Utf8) }
 $OpsSeq = [int64]0
 $OpsEids = New-Object 'System.Collections.Generic.HashSet[string]'

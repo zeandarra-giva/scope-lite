@@ -133,9 +133,9 @@
     const shiftTag = (x) => x.away ? '' : x.sh && x.sh !== 'OFF' ? html`<span class="${cls('pill', SHIFT_TAG[x.sh])}">${S.shiftLabel(x.sh)}</span>`
       : html`<span class="pill warn" title="Set it in Team Management → Schedule & coverage">No shift set</span>`
     return html`<div class="card today-sched">
-      <div class="card-h" style="flex-wrap:nowrap">
-        <h2 style="white-space:nowrap">Today's schedule</h2>
-        <span class="muted small nowrap">${list.length} working${list.filter((x) => x.on).length < list.length ? ` · ${list.filter((x) => x.on).length} signed in` : ''}</span>
+      <div class="card-h ts-head">
+        <h2>Today's schedule</h2>
+        <span class="muted small">${list.length} working${list.filter((x) => x.on).length < list.length ? ` · ${list.filter((x) => x.on).length} signed in` : ''}</span>
         <span class="spacer"></span>
         <button class="btn ghost sm nowrap" data-click="live.sched" data-v="${S.rota.mondayOf(day)}">Open schedule ${icon('arrowR', 14)}</button>
       </div>

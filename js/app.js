@@ -47,7 +47,9 @@
   const app = {
     session: storage.get(SESSION_KEY),
     signedOut: false,
-    wsId: (workspaceById(storage.get(WS_KEY)) || {}).id || null,
+    // The workspace picker is off for now (lead, 2026-11-19): Scope opens straight into the
+    // Solution Center. workspacePicker() stays for when the other workspaces come back.
+    wsId: 'sc',
   }
   if (app.session && app.session !== S.state.role) S.state = { ...S.state, role: app.session }
   const pickWs = (id) => { storage.set(WS_KEY, id); app.wsId = id; S.render() }
@@ -269,7 +271,6 @@
         </div>
         ${real && html`<button role="menuitem" class="menu-item" data-click="sched.editOpen">${icon('edit', 16)}${today ? "Change today's role or shift" : "Start today's shift"}</button>`}
         <button role="menuitem" class="menu-item" data-click="app.profile" data-v="settings">${icon('user', 16)}Account profile</button>
-        <button role="menuitem" class="menu-item" data-click="app.profile" data-v="switch">${icon('swap', 16)}Switch workspace<span class="spacer"></span><span class="muted small">${ws.short}</span></button>
         <button role="menuitem" class="menu-item danger" data-click="app.profile" data-v="logout">${icon('logout', 16)}Log out</button>
       </div>`}
       <button class="${cls('profile-btn', active && 'active')}" data-click="app.pop" data-v="profile" aria-haspopup="menu" aria-expanded="${open}">
@@ -340,7 +341,6 @@
               <b>${ws.name}</b>
             </span>
             <span class="spacer"></span>
-            <button class="btn ghost sm" data-click="app.changeWs">Change</button>
           </div>
           <h1>Sign in</h1>
           ${hasRoster() ? rosterLogin(u)

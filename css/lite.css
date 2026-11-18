@@ -256,6 +256,25 @@ button.sc-cell:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .ts-status.online::before { content: ''; display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: currentColor; margin-right: 6px; vertical-align: middle; }
 .ts-status.warn { color: var(--tag-yellow-ink); }
 .ts-tags { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+/* The header wraps instead of spilling out of the card when the column is narrow */
+.today-sched { min-width: 0; overflow: hidden; }
+.ts-head { flex-wrap: wrap; row-gap: 4px; }
+.ts-head h2 { white-space: nowrap; }
+.ts-head .btn { margin-left: auto; }
+.ts-tags .pill { white-space: nowrap; }
+@container (max-width: 360px) { .ts-row { grid-template-columns: 34px minmax(0, 1fr); } .ts-tags { grid-column: 2; flex-direction: row; flex-wrap: wrap; align-items: center; } }
+.home-side > .card { container-type: inline-size; }
+@media (max-width: 420px) { .ts-row { grid-template-columns: 34px minmax(0, 1fr); } .ts-tags { grid-column: 2; flex-direction: row; flex-wrap: wrap; align-items: center; } }
+/* Team queue: owner dropdown on each row, grouping by analyst, queue column */
+.tq-grp td { background: var(--tag); padding-top: 8px; padding-bottom: 8px; }
+.tq-grp .avatar.xs { width: 22px; height: 22px; font-size: 10px; }
+.tq-queue { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tq-by input { margin: 0; }
+.owner-sel { height: 30px; font-size: 13px; width: 170px; }
+.home-cols .qm-compact { min-width: 1120px; }
+.qm-compact .tq-tag { white-space: nowrap; }
+.qm-compact .tq-tag .row { flex-wrap: nowrap; }
+.home-cols .team-body .tbl-scroll { overflow-x: auto; }
 .pill.role-main { background: var(--tag-yellow); color: var(--tag-yellow-ink); }
 .pill.role-backup { background: var(--tag-blue); color: var(--tag-blue-ink); }
 .pill.role-weekend { background: var(--tag-green); color: var(--tag-green-ink); }

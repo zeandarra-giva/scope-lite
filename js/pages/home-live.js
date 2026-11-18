@@ -66,17 +66,17 @@
       .sort((a, b) => b.inPool - a.inPool || b.l.total - a.l.total || a.p.name.localeCompare(b.p.name))
     const pool = rows.filter((r) => r.inPool)
     const spread = pool.length ? Math.max(...pool.map((r) => r.l.total)) - Math.min(...pool.map((r) => r.l.total)) : 0
-    const max = Math.max(1, ...rows.map((r) => r.assigned))
+    const max = Math.max(1, ...rows.map((r) => r.open))
     const rb = Q().rebalancePreview(m.now)
     const auto = m.v.settings.autoHandout !== false && m.v.settings.autoHandout !== 'false'
     const work = rb.moves.length + (pool.length ? m.unassigned : 0)
     return html`<div class="card">
       <div class="card-h" style="flex-wrap:nowrap">
-        <h2 style="white-space:nowrap">Tickets per person today</h2>
+        <h2 style="white-space:nowrap">Tickets per person</h2>
         ${html`<button class="btn sm" data-click="live.rebalance" ${attrs({ disabled: !work, title: `${spread <= 1 ? 'Balanced' : 'Uneven'}: spread ${spread} (highest minus lowest today, among people getting tickets). ${work ? `${rb.moves.length} to move${m.unassigned && pool.length ? `, ${m.unassigned} to hand out` : ''}` : 'Already even.'}` })}>${icon('swap', 14)}Rebalance${work > 0 && html` <b class="num">${work}</b>`}</button>`}
         <span class="spacer"></span>
         ${S.infoTip('live-fair', 'Equal distribution', html`
-          <span>Each row shows <b>done / assigned</b> today. <b>Assigned</b>: tickets that became theirs today. <b>Done</b>: those that are tagged Resolved or Transferred, or have left the ServiceNow export. Faded rows aren't getting tickets right now (hover a name to see why).</span>
+          <span>The big number is what each person <b>holds now</b>: every open ticket on them, including ones carried over from earlier days and ones ServiceNow assigned to them. Under the name: how many became theirs <b>today</b> and how many of those are done (Resolved, Transferred or gone from the export). Faded rows aren't getting tickets today (hover a name to see why).</span>
           <span>Tickets are shared equally among <b>everyone scheduled to work today</b> in Team Management (a shift set, not on leave, not a rest day), whether or not they have signed in yet. Each new ticket goes to whoever has <b>the fewest tickets today</b> (assigned + verified manual entries). Ties go to whoever got one least recently.</span>
           <span>${auto ? html`<b>Automatic:</b> new tickets are handed out as soon as they load, so nobody presses a button.` : html`Automatic hand-out is <b>off</b> in Team settings, so use Rebalance or Hand out.`}</span>
           <span><b>EERS</b> tickets go to today's Proci Backup. Tickets ServiceNow already assigned to an active team member count for that person and are never moved.</span>
@@ -87,11 +87,12 @@
         ${m.unassigned > 0 && html`<div class="callout warn small">${icon('user', 16)}<span><b>${m.unassigned} waiting.</b> ${pool.length ? (auto ? 'Handing them out…' : 'Rebalance or Hand out to share them.') : Q().waitingReason(m.v, m.now)}</span></div>`}
         ${rows.length ? rows.map((r) => html`<div class="dist-row" style="opacity:${r.inPool ? 1 : 0.55}" data-key="${r.p.soeid}">
             <span class="avatar sm">${S.initials(r.p.name)}</span>
-            <span class="small dist-name" title="${r.p.name} · ${r.status[1]} · ${r.open} still open on them${r.l.manual ? ` · +${r.l.manual} verified manual` : ''}">${r.p.name}${r.sp && r.sp.duty !== 'ANALYST' ? html` <span class="muted">· ${S.dutyLabel(r.sp.duty)}</span>` : ''}</span>
-            <div class="dist-bar" title="${r.done} of ${r.assigned} assigned today are done">
-              <div class="dist-done" style="width:${(r.done / max) * 100}%"></div><div class="dist-left" style="width:${((r.assigned - r.done) / max) * 100}%"></div>
+            <span class="small dist-name" title="${r.p.name} · ${r.status[1]}${r.l.manual ? ` · +${r.l.manual} verified manual today` : ''}">${r.p.name}${r.sp && r.sp.duty !== 'ANALYST' ? html` <span class="muted">· ${S.dutyLabel(r.sp.duty)}</span>` : ''}
+              <span class="muted dist-sub">+${r.assigned} new today${r.done ? ` · ${r.done} done` : ''}</span></span>
+            <div class="dist-bar" title="${r.open} open on ${r.p.name.split(' ')[0]} now">
+              <div class="dist-left" style="width:${(r.open / max) * 100}%"></div>
             </div>
-            <span class="small num dist-frac" title="Done / assigned today"><b>${r.done}</b><span class="muted">/${r.assigned}</span></span>
+            <span class="num dist-frac" title="Open tickets on them now"><b>${r.open}</b><span class="muted small"> open</span></span>
           </div>`) : html`<div class="empty">Nobody is scheduled or signed in today yet.</div>`}
       </div>
     </div>`

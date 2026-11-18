@@ -6,11 +6,12 @@
 // is time since the ticket was last touched, against the SLO/SLA in Team settings.
 ;(function () {
   const { html, cls, attrs, icon } = S
+  // Home is where the team watches the queue: health, loading the ServiceNow export (top
+  // right), how tickets are spread (and rebalanced), the week's schedule, and the
+  // team-scoped tabs (team queue, handover, verifying manual entries). Your own tickets
+  // and entries are on Queue Management.
   // Pages load before S.qm.js, so look S.qm up when used.
   const Q = () => S.queue
-  const nameOf = (s) => (s ? (S.qm.roster.find((p) => p.soeid === s) || {}).name || s : '')
-  const fmtAgo = (ms) => { const m = Math.round(ms / 60e3); return m < 60 ? `${m} min` : m < 2880 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.floor(m / 1440)} days` }
-  const fmtWhen = (ms) => new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })
 
   function metrics() {
     const v = Q().view()
@@ -36,112 +37,118 @@
   }
 
   // ---------- Cards ----------
-  function rolesCard(m) {
-    const day = S.rota.today()
-    const r = S.rota.dayRoles(day)
-    const weekend = r.wd >= 5
-    const byShift = (id) => m.plans.filter((x) => x.pl.shift === id).map((x) => x.p.name)
-    const row = (label, who, extra) => html`<div class="row" style="flex-wrap:nowrap;gap:10px"><span class="muted small" style="width:132px;flex:none">${label}</span>${who ? html`<b>${who}</b>` : html`<span class="pill warn">Not set</span>`}${extra && html`<span class="muted small">${extra}</span>`}</div>`
-    return html`<div class="card">
-      <div class="card-h"><h2>Today's roles</h2><span class="spacer"></span><button class="btn ghost sm" data-click="live.go" data-v="team" data-t="rota">Proci rota ${icon('arrowR', 14)}</button></div>
-      <div class="card-b stack" style="gap:10px">
-        ${weekend ? row('Weekend Support', nameOf(r.weekend), 'all BAUs, Early hours') : html`
-          ${row('Main Proci', nameOf(r.main), 'Severity Line · INC · CMP · Handover')}
-          ${row('Proci Backup', nameOf(r.backup), 'QM · Support Line · EERS')}`}
-        ${r.p.p2 && !weekend && row('Backup ×2', nameOf(r.p.p2), 'steps in if the Main Proci is on leave')}
-        ${[...r.notes, ...r.gaps.map((g) => `⚠️ ${g}`)].map((n) => html`<div class="callout ${n.startsWith('⚠️') ? 'warn' : 'accent'} small">${n}</div>`)}
-        <div class="divider"></div>
-        ${weekend ? '' : html`${row('Early shift', byShift('EARLY').join(', ') || '—')}${row('Late shift', byShift('LATE').join(', ') || '—')}`}
-        ${m.plans.some((x) => x.pl.role === 'REST') && row('Resting', m.plans.filter((x) => x.pl.role === 'REST').map((x) => x.p.name).join(', '))}
-        ${m.leave > 0 && row('On leave', m.plans.filter((x) => x.pl.role === 'LEAVE').map((x) => x.p.name).join(', '))}
-        ${m.plans.some((x) => !x.pl.off && !x.pl.shift && x.pl.role !== 'LEAVE' && x.pl.role !== 'REST') && html`<span class="muted small">No shift set for: ${m.plans.filter((x) => !x.pl.off && !x.pl.shift && x.pl.role !== 'LEAVE' && x.pl.role !== 'REST').map((x) => x.p.name).join(', ')} (Team Management → Schedule &amp; coverage)</span>`}
-      </div>
-    </div>`
-  }
-
-  function spreadCard(m) {
-    const rows = m.shift.map((p) => {
+  // Tickets per person today (the prototype's "Assigned per online analyst" card, on the
+  // team's real rule: an even share of tickets handled today, Team Operating Model Q17).
+  function assignmentCard(m) {
+    const me = S.qm.me()
+    const lead = me.accessRole === 'Lead'
+    const today = S.rota.today()
+    const shift = new Map(m.shift.map((p) => [p.soeid, p]))
+    const people = S.qm.roster.filter((p) => p.active !== false)
+    const from = new Date(m.now).setHours(0, 0, 0, 0)
+    const rows = people.map((p) => {
+      const sp = shift.get(p.soeid)
+      const pl = S.schedule.planFor(p.soeid, today)
       const l = Q().loadToday(p.soeid, m.now, m.v.tickets)
       const mine = m.v.tickets.filter((t) => Q().owner(t) === p.soeid)
-      return { p, l, open: mine.filter(Q().isOpen).length, eers: mine.filter((t) => t.eers && (t.to ? t.assignedAt : t.firstSeen) >= new Date().setHours(0, 0, 0, 0)).length, cut: m.now >= p.w.cutoff }
-    }).sort((a, b) => b.l.total - a.l.total)
-    const pool = rows.filter((r) => !r.cut)
-    const max = Math.max(1, ...rows.map((r) => r.l.total))
+      // Distributed today = tickets that became theirs today; done = those no longer open
+      // (tagged Resolved or Transferred, or gone from the ServiceNow export).
+      const given = mine.filter((t) => (t.to ? t.assignedAt : t.firstSeen) >= from)
+      const done = given.filter((t) => !Q().isOpen(t)).length
+      const open = mine.filter(Q().isOpen).length
+      const status = sp ? (m.now < sp.w.cutoff ? ['good', `Until ${S.fmtTime(sp.w.cutoff)}`, true] : ['plain', 'Past cutoff', false])
+        : pl.role === 'LEAVE' ? ['plain', 'On leave', false] : pl.ready ? ['warn', 'Not signed in', false] : ['plain', 'Off today', false]
+      return { p, sp, pl, l, assigned: given.length, done, open, status, inPool: status[2] }
+    }).filter((r) => r.sp || r.pl.ready || r.open || r.l.total)
+      .sort((a, b) => b.inPool - a.inPool || b.l.total - a.l.total || a.p.name.localeCompare(b.p.name))
+    const pool = rows.filter((r) => r.inPool)
     const spread = pool.length ? Math.max(...pool.map((r) => r.l.total)) - Math.min(...pool.map((r) => r.l.total)) : 0
+    const max = Math.max(1, ...rows.map((r) => r.assigned))
+    const rb = lead ? Q().rebalancePreview(m.now) : { moves: [] }
+    const auto = m.v.settings.autoHandout !== false && m.v.settings.autoHandout !== 'false'
+    const work = rb.moves.length + (pool.length ? m.unassigned : 0)
     return html`<div class="card">
-      <div class="card-h"><h2>Tickets per person today</h2>${pool.length > 1 && html`<span class="pill plain" title="Highest minus lowest handled today, among people still getting tickets">Spread ${spread}</span>`}<span class="spacer"></span>
-        ${m.unassigned > 0 && html`<button class="btn sm primary" data-click="queue.handout">${icon('send', 14)}Hand out ${m.unassigned}</button>`}
-        ${S.infoTip('live-fair', 'How tickets are shared', html`<span>Each ticket goes to whoever has <b>handled the fewest tickets today</b> (tickets that became theirs today + verified manual entries), among people signed in and before their cutoff.</span><span><b>EERS</b> tickets go to today's Proci Backup. Tickets already assigned in ServiceNow count for that person.</span><span>Transferred tickets still count as handled.</span>`)}</div>
-      <div class="card-b stack" style="gap:10px">
-        ${rows.length ? rows.map((r) => html`<div class="load-row" style="opacity:${r.cut ? 0.6 : 1}" data-key="${r.p.soeid}">
-            <span class="avatar sm">${S.initials ? S.initials(r.p.person.name) : ''}</span>
-            <span class="small load-name" title="${S.dutyLabel(r.p.duty)}">${r.p.person.name}</span>
-            <div class="hbar-track load-bar" title="${r.l.total} handled today"><div class="hbar-fill" style="width:${(r.l.total / max) * 100}%;background:var(--s7)"></div></div>
-            <span class="num small load-open" title="${r.l.total} handled today, ${r.open} still open"><b>${r.l.total}</b> · ${r.open} open</span>
-            <span class="small muted load-today" title="EERS handed to them today">${r.eers > 0 ? `${r.eers} EERS` : ''}</span>
-            <span class="${cls('pill load-status', r.cut ? 'plain' : 'good')}">${r.cut ? 'Past cutoff' : `Until ${S.fmtTime(r.p.w.cutoff)}`}</span>
-          </div>`) : html`<div class="empty">Nobody has signed in today yet.</div>`}
-      </div>
-    </div>`
-  }
-
-  // ---------- Tabs ----------
-  function queueTab() {
-    const v = Q().view()
-    const u = S.ui('p:home:live', { show: 'open', q: '' })
-    const q = u.q.trim().toLowerCase()
-    const list = v.tickets
-      .filter((t) => (u.show === 'open' ? Q().isOpen(t) : u.show === 'unassigned' ? Q().isOpen(t) && !Q().owner(t) && !t.sn : u.show === 'breached' ? Q().isOpen(t) && Q().health(t, v.settings).slaBreached : u.show === 'gone' ? !t.inLatest : true))
-      .filter((t) => !q || [t.n, t.short, t.group, t.sn, nameOf(Q().owner(t))].join(' ').toLowerCase().includes(q))
-      .sort((a, b) => (a.p || 9) - (b.p || 9) || (a.opened || 0) - (b.opened || 0))
-    return html`<div class="card-h qm-toolbar">
-        <div class="kb-search">${icon('search', 16)}<input type="search" placeholder="Search INC, description, group, owner" value="${u.q}" data-input="live.q" aria-label="Search tickets"></div>
-        <select class="in" aria-label="Show" data-change="live.show">${[['open', 'Open'], ['unassigned', 'Unassigned'], ['breached', 'Past SLA'], ['gone', 'Left the queue'], ['all', 'All']].map(([k, l]) => html`<option value="${k}" ${attrs({ selected: u.show === k })}>${l}</option>`)}</select>
+      <div class="card-h" style="flex-wrap:nowrap">
+        <h2 style="white-space:nowrap">Tickets per person today</h2>
+        ${lead && html`<button class="btn sm" data-click="live.rebalance" ${attrs({ disabled: !work, title: `${spread <= 1 ? 'Balanced' : 'Uneven'}: spread ${spread} (highest minus lowest today, among people getting tickets). ${work ? `${rb.moves.length} to move${m.unassigned && pool.length ? `, ${m.unassigned} to hand out` : ''}` : 'Already even.'}` })}>${icon('swap', 14)}Rebalance${work > 0 && html` <b class="num">${work}</b>`}</button>`}
         <span class="spacer"></span>
-        <button class="btn ghost sm" data-click="queue.goImport">${icon('upload', 14)}Load an export</button>
+        ${S.infoTip('live-fair', 'Equal distribution', html`
+          <span>Each row shows <b>done / assigned</b> today. <b>Assigned</b>: tickets that became theirs today. <b>Done</b>: those that are tagged Resolved or Transferred, or have left the ServiceNow export. Faded rows aren't getting tickets right now (hover a name to see why).</span>
+          <span>Every new ticket goes to whoever has <b>the fewest tickets today</b> (assigned + verified manual entries), among people signed in and before their cutoff. Ties go to whoever got one least recently.</span>
+          <span>${auto ? html`<b>Automatic:</b> new tickets are handed out as soon as they load and someone is on shift, so nobody presses a button.` : html`Automatic hand-out is <b>off</b> in Team settings, so use Rebalance or Hand out.`}</span>
+          <span><b>EERS</b> tickets go to today's Proci Backup. Tickets already assigned in ServiceNow count for that person and are never moved.</span>
+          <span><b>Rebalance</b> (leads) hands out anything waiting, moves untouched tickets (tag Assigned) off people past their cutoff, signed out or on leave, then evens out today's counts until the spread is 1 or less. Every move records its reason.</span>`)}
       </div>
-      ${list.length ? Q().ticketTable(list, v.settings) : html`<div class="empty">${v.latest ? 'Nothing matches.' : 'No export loaded yet. Load the ServiceNow export on Queue Management → Team queue.'}</div>`}`
-  }
-
-  // A draft from real tickets. The team's actual handover template isn't in Scope yet
-  // (vault: Team Operating Model §4), so this is a summary to copy, not the template.
-  function handoverText(m) {
-    const from = new Date().setHours(0, 0, 0, 0)
-    const r = S.rota.dayRoles(S.rota.today())
-    const done = m.v.tickets.filter((t) => ['Resolved', 'Transferred'].includes(t.tag) && t.tagAt >= from)
-    const crit = m.open.filter((t) => t.p <= 2)
-    const breached = m.h.filter((x) => x.h.slaBreached).map((x) => x.t)
-    const onHold = m.v.tickets.filter((t) => t.inLatest && t.tag === 'On Hold')
-    const notes = S.ui('p:home:ho', { notes: '' }).notes.trim()
-    const list = (ts) => ts.map((t) => `${t.n} ${t.priority}${t.short ? ` – ${t.short}` : ''}${Q().owner(t) ? ` (${nameOf(Q().owner(t))})` : ''}`).join('\n  ') || 'none'
-    return [
-      `Handover · ${new Date().toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · Main Proci ${nameOf(r.main) || '—'}`,
-      `Open: ${m.open.length} (P1 ${m.p1}, P2 ${m.p2}, EERS ${m.eers}) · unassigned ${m.unassigned} · backlog ${m.backlog}`,
-      `Closed today in Scope: ${done.filter((t) => t.tag === 'Resolved').length} resolved, ${done.filter((t) => t.tag === 'Transferred').length} transferred`,
-      `P1/P2 still open:\n  ${list(crit)}`,
-      `Past SLA:\n  ${list(breached)}`,
-      `On Hold (waiting on the user): ${onHold.length}`,
-      notes && `Notes: ${notes}`,
-      `Data: ServiceNow export loaded ${m.v.latest ? `${fmtAgo(m.now - m.v.latest.at)} ago` : 'not yet'}`,
-    ].filter(Boolean).join('\n')
-  }
-  function handoverTab(m) {
-    const f = S.ui('p:home:ho', { notes: '' })
-    return html`<div class="stack lg" style="padding:16px">
-      <div class="callout warn small">${icon('info', 16)}<span><b>Draft from the live queue.</b> The team's handover template and the partner-site call aren't in Scope yet; copy this into your usual handover message.</span></div>
-      <label class="field"><span>Notes for the next shift</span><textarea class="in" rows="3" data-input="live.hoNotes" placeholder="Callbacks owed, vendor cases, anything to watch">${f.notes}</textarea></label>
-      <pre class="qm-pre live-ho">${handoverText(m)}</pre>
-      <div class="row"><span class="spacer"></span><button class="btn primary" data-click="live.hoCopy">${icon('copy', 15)}Copy summary</button></div>
+      <div class="card-b stack" style="gap:10px">
+        ${m.unassigned > 0 && html`<div class="callout warn small">${icon('user', 16)}<span><b>${m.unassigned} waiting.</b> ${pool.length ? (auto ? 'Handing them out…' : 'Rebalance or Hand out to share them.') : 'Nobody is on shift before their cutoff yet; they go out automatically when someone signs in.'}</span></div>`}
+        ${rows.length ? rows.map((r) => html`<div class="dist-row" style="opacity:${r.inPool ? 1 : 0.55}" data-key="${r.p.soeid}">
+            <span class="avatar sm">${S.initials(r.p.name)}</span>
+            <span class="small dist-name" title="${r.p.name} · ${r.status[1]} · ${r.open} still open on them${r.l.manual ? ` · +${r.l.manual} verified manual` : ''}">${r.p.name}${r.sp && r.sp.duty !== 'ANALYST' ? html` <span class="muted">· ${S.dutyLabel(r.sp.duty)}</span>` : ''}</span>
+            <div class="dist-bar" title="${r.done} of ${r.assigned} assigned today are done">
+              <div class="dist-done" style="width:${(r.done / max) * 100}%"></div><div class="dist-left" style="width:${((r.assigned - r.done) / max) * 100}%"></div>
+            </div>
+            <span class="small num dist-frac" title="Done / assigned today"><b>${r.done}</b><span class="muted">/${r.assigned}</span></span>
+          </div>`) : html`<div class="empty">Nobody is scheduled or signed in today yet.</div>`}
+      </div>
     </div>`
   }
-  function verifyTab() {
-    const me = S.qm.me()
-    const list = (S.qm.entries || []).filter((x) => x.status === 'Pending' && x.by !== me.soeid).sort((a, b) => a.at - b.at)
-    return list.length ? html`<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>INC</th><th>Handled</th><th>Analyst</th><th>Reason</th><th></th></tr></thead>
-        <tbody>${list.map((x) => html`<tr data-key="${x.id}"><td class="mono">${x.inc}</td><td class="nowrap">${fmtWhen(x.handledAt)}</td><td>${nameOf(x.by)}</td><td class="qm-clip" title="${x.reason}">${x.reason}</td>
-          <td><button class="btn sm" data-click="live.verify" data-v="${x.id}">Review</button></td></tr>`)}</tbody></table></div>`
-      : html`<div class="empty">Nothing to verify. All caught up.</div>`
+
+
+  // ---------- Today's schedule ----------
+  // One row per active team member: who they are, whether they're signed in, and today's
+  // role and shift as tags (from Team Management: the Proci rota and Schedule & coverage).
+  const ROLE_TAG = { MAIN_PROCI: ['role-main', 'shield'], PROCI_BACKUP: ['role-backup', 'shield'], WEEKEND_SUPPORT: ['role-weekend', 'cal'], ANALYST: ['', 'user'] }
+  const SHIFT_TAG = { EARLY: 'shift-early', LATE: 'shift-late', WEEKEND: 'shift-weekend' }
+  function todaySchedule(m) {
+    const day = S.rota.today()
+    const r = S.rota.dayRoles(day)
+    const pres = S.schedule.todayPresence(day)
+    const cov = S.schedule.coverage(day)
+    const shift = new Map(m.shift.map((p) => [p.soeid, p]))
+    const rank = { MAIN_PROCI: 0, PROCI_BACKUP: 1, WEEKEND_SUPPORT: 2, ANALYST: 3 }
+    const rows = S.qm.roster.filter((p) => p.active !== false).map((p) => {
+      const pl = S.schedule.planFor(p.soeid, day)
+      const sp = shift.get(p.soeid)
+      const pr = pres.get(p.soeid)
+      const role = sp ? sp.duty : pl.role
+      const sh = sp ? sp.shift : pl.shift
+      const away = !sp && (pl.role === 'LEAVE' || pl.role === 'REST') // signed in = working
+      const status = sp && m.now < sp.w.cutoff ? ['online', `Online · in ${S.fmtTime(pr ? pr.firstAt : sp.at)}`]
+        : sp ? ['', `Past cutoff · in ${S.fmtTime(pr ? pr.firstAt : sp.at)}`]
+        : pl.role === 'LEAVE' ? ['', 'On leave'] : pl.role === 'REST' ? ['', 'Rest day']
+        : pl.ready ? ['warn', 'Not signed in yet'] : ['', 'Not scheduled']
+      return { p, pl, role, sh, away, status, on: !!sp, working: !!sp || pl.ready }
+    }).sort((a, b) => a.away - b.away || (rank[a.role] ?? 9) - (rank[b.role] ?? 9) || a.p.name.localeCompare(b.p.name))
+    // Only who works today: signed in, or scheduled in Team Management. Everyone else
+    // (leave, rest day, no shift) is summed up in one line underneath.
+    const list = rows.filter((x) => x.working)
+    const off = rows.filter((x) => !x.working)
+    const roleTag = (x) => {
+      if (x.away && x.pl.role === 'LEAVE') return html`<span class="pill">On leave</span>`
+      if (x.away) return html`<span class="pill">Rest day</span>`
+      if (!x.role) return ''
+      const [c, ic] = ROLE_TAG[x.role] || ['', 'user']
+      return html`<span class="${cls('pill', c)}">${icon(ic, 12)}${S.dutyLabel(x.role)}</span>`
+    }
+    const shiftTag = (x) => x.away ? '' : x.sh && x.sh !== 'OFF' ? html`<span class="${cls('pill', SHIFT_TAG[x.sh])}">${S.shiftLabel(x.sh)}</span>`
+      : html`<span class="pill warn" title="Set it in Team Management → Schedule & coverage">No shift set</span>`
+    return html`<div class="card today-sched">
+      <div class="card-h" style="flex-wrap:nowrap">
+        <h2 style="white-space:nowrap">Today's schedule</h2>
+        <span class="muted small nowrap">${list.length} working${list.filter((x) => x.on).length < list.length ? ` · ${list.filter((x) => x.on).length} signed in` : ''}</span>
+        <span class="spacer"></span>
+        <button class="btn ghost sm nowrap" data-click="live.sched" data-v="${S.rota.mondayOf(day)}">Open schedule ${icon('arrowR', 14)}</button>
+      </div>
+      <div class="card-b stack" style="gap:10px">
+        ${(r.gaps.length > 0 || cov.short.length > 0) && html`<div class="callout warn small">${icon('alert', 15)}<span>${[...r.gaps, ...cov.short.map((x) => `Short on ${x}`)].join(' · ')}. Fix it in Team Management.</span></div>`}
+        ${list.length ? html`<ol class="ts-list">${list.map((x) => html`<li class="${cls('ts-row', x.away && 'away')}" data-key="${x.p.soeid}">
+            <span class="avatar">${S.initials(x.p.name)}</span>
+            <span class="ts-who"><b title="${x.p.name}">${x.p.name}</b><span class="${cls('ts-status small', x.status[0])}">${x.status[1]}</span></span>
+            <span class="ts-tags">${roleTag(x)}${shiftTag(x)}</span>
+          </li>`)}</ol>` : html`<div class="empty">Nobody is scheduled or signed in today.</div>`}
+        ${off.length > 0 && html`<div class="small muted">Off today: ${off.map((x) => `${x.p.name.split(' ')[0]} (${x.pl.role === 'LEAVE' ? 'leave' : x.pl.role === 'REST' ? 'rest day' : 'no shift set'})`).join(', ')}</div>`}
+      </div>
+    </div>`
   }
 
   // ---------- Page ----------
@@ -149,15 +156,13 @@
     const me = S.qm.me()
     const lead = me.accessRole === 'Lead'
     const m = metrics()
-    const u = S.ui('p:home:tabs', { tab: 'queue' })
-    const pending = (S.qm.entries || []).filter((x) => x.status === 'Pending' && x.by !== me.soeid).length
-    const tab = u.tab === 'verify' && !lead ? 'queue' : u.tab
-    const tsel = S.ui('p:qm').tsel
-    const t = tsel && m.v.tickets.find((x) => x.n === tsel)
-    if (t) Q().ticketDrawer(t, me)
+    const u = S.ui('p:home:tabs', () => ({ tab: ['queue', 'strike', 'handover', 'verify', 'all'].includes(S.route.tab) ? S.route.tab : 'queue' }))
+    const tab = !lead && (u.tab === 'verify' || u.tab === 'all') ? 'queue' : u.tab
+    S.qm.team.drawers(me)
+    Q().importModal(me)
     const healthState = m.sla ? 'crit' : m.slo ? 'warn' : 'good'
     return html`
-      <section class="grid g-kpi" aria-label="Queue health">
+      <section class="grid g-kpi home-top" aria-label="Queue health">
         ${S.kpi({ label: 'Open incidents', icon: 'alert', value: m.open.length, state: m.p1 ? 'crit' : undefined,
           info: html`<span>Open tickets in the latest ServiceNow export that aren't tagged Resolved or Transferred in Scope.</span>`,
           foot: html`<span class="prio P1">P1 ${m.p1}</span><span class="prio P2">P2 ${m.p2}</span><span>${m.eers} EERS</span>` })}
@@ -173,32 +178,39 @@
           </div>`)}
         ${S.kpi({ label: 'Waiting for someone', icon: 'user', tone: m.unassigned ? 'warn' : 'good', value: m.unassigned,
           info: html`<span>Open tickets nobody owns yet: no one was on shift before their cutoff when they loaded. Use <b>Hand out</b> once someone signs in.</span>`,
-          foot: html`<span class="${cls('pill', m.imp.tone)}">${m.imp.label}</span><span>${m.imp.age == null ? 'no export yet' : `export ${fmtAgo(m.imp.age)} old`}</span>` })}
+          foot: m.unassigned ? 'Rebalance once someone is on shift' : 'Every open ticket has an owner' })}
         ${S.kpi({ label: 'On shift now', icon: 'team', tone: 'navy', value: m.nowOn, unit: `/ ${m.scheduled} scheduled`,
           info: html`<span>Signed in today and before the end of their shift. Scheduled comes from Team Management (rota and shifts).</span>`,
           foot: html`${m.leave} on leave · ${m.rest} resting` })}
       </section>
-      <section class="grid g-2">${rolesCard(m)}${spreadCard(m)}</section>
-      <section class="card">
+      <div class="grid g-3-1 home-cols">
+      <section class="card team-col" aria-label="Team"><div class="team-fill">
         <div style="padding:4px 12px 0">${S.tabs([
-          { id: 'queue', label: 'Team queue', count: m.open.length },
-          { id: 'handover', label: 'Shift handover' },
-          ...(lead ? [{ id: 'verify', label: 'To verify', count: pending }] : []),
+          { id: 'queue', label: 'Team queue', icon: 'list', count: m.open.length },
+          { id: 'strike', label: '3-Strike', icon: 'clock', count: S.strike.rows().length },
+          { id: 'handover', label: 'Shift handover', icon: 'swap' },
+          ...(lead ? [{ id: 'verify', label: 'To verify', icon: 'shield', count: S.qm.team.pending() }, { id: 'all', label: 'All manual entries', icon: 'table' }] : []),
         ], tab, 'live.tab')}</div>
-        ${tab === 'queue' && queueTab()}
-        ${tab === 'handover' && handoverTab(m)}
-        ${tab === 'verify' && verifyTab()}
-      </section>`
+        <div class="team-body">
+        ${tab === 'queue' && Q().teamQueue(me)}
+        ${tab === 'strike' && S.strike.homeTab(me)}
+        ${tab === 'handover' && Q().handover()}
+        ${tab === 'verify' && S.qm.team.verify()}
+        ${tab === 'all' && html`<div class="card-b">${S.qm.team.all()}</div>`}
+        </div>
+      </div></section>
+      <div class="stack home-side">${todaySchedule(m)}${assignmentCard(m)}</div>
+      </div>`
   }
 
   S.homeLive = HomeLive
   S.on({
     'live.tab': (el) => S.set(S.ui('p:home:tabs'), { tab: el.dataset.v }),
-    'live.q': (el) => S.set(S.ui('p:home:live'), { q: el.value }),
-    'live.show': (el) => S.set(S.ui('p:home:live'), { show: el.value }),
-    'live.hoNotes': (el) => { S.ui('p:home:ho').notes = el.value; S.render() },
-    'live.hoCopy': () => { const t = handoverText(metrics()); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => S.dispatch({ type: 'toast', text: 'Handover summary copied' }), () => S.dispatch({ type: 'toast', text: "Couldn't copy; select the text instead" })) },
-    'live.verify': (el) => { S.nav('qm'); S.set(S.ui('p:qm'), { tab: 'verify', sel: el.dataset.v }) },
+    'live.sched': (el) => { S.nav('team'); S.set(S.ui('p:team'), { tab: 'schedule' }); S.schedule.showWeek(el.dataset.v) },
+    'live.rebalance': async () => {
+      const r = await Q().rebalance()
+      S.dispatch({ type: 'toast', text: r.handed || r.moved ? `Rebalanced: ${[r.handed && `${r.handed} handed out`, r.moved && `${r.moved} moved`].filter(Boolean).join(', ')}` : 'Already even' })
+    },
     'live.go': (el) => { S.nav(el.dataset.v); if (el.dataset.t) S.set(S.ui('p:team'), { tab: el.dataset.t }) },
   })
 })()

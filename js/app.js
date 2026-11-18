@@ -6,8 +6,8 @@
   // Account profile is reached from the profile menu at the bottom of the sidebar.
   // managerOnly pages are hidden from analysts and fall back to Home if opened by link.
   const PAGES = [
-    { id: 'home', label: 'Home', icon: 'home', title: 'Queue command', desc: 'Live incident queue, queue health and today\'s staffing.' },
-    { id: 'qm', label: 'Queue Management', icon: 'clip', title: 'Queue Management', desc: 'Live team data. Load the ServiceNow export, get tickets handed out fairly, track your own, and log tickets you handled outside your queue.' },
+    { id: 'home', label: 'Home', icon: 'home', title: 'Queue command', desc: 'Live incident queue, queue health and today\'s staffing.', noHead: () => !!(S.homeLive && S.schedule && S.schedule.real() && S.qm.me()) },
+    { id: 'qm', label: 'Queue Management', icon: 'clip', title: 'Queue Management', desc: 'Work your tickets and log the ones you handled outside your queue.', aside: () => S.queue && S.queue.onShiftStack() },
     { id: 'explorer', label: 'Ticket Explorer', icon: 'search', title: 'Ticket Explorer', desc: 'How every incident was solved: resolution journeys, codes and handover history.' },
     { id: 'reports', label: 'Reports', icon: 'chart', title: 'Reports', desc: 'Performance, quality and coaching, plus self-serve questions answered in your browser.' },
     { id: 'team', label: 'Team Management', icon: 'team', title: 'Team Management', desc: 'Roster, access, shift coverage, attendance and your password vault.' },
@@ -16,7 +16,7 @@
     { id: 'suggestions', label: 'Suggestions', icon: 'bulb', title: 'Suggestions', managerOnly: true, desc: 'Ideas, bugs and workarounds from the team. File one in a few seconds; everyone sees the same list.' },
     { id: 'settings', label: 'Account profile', icon: 'user', title: 'Account profile', desc: 'Your profile, access, attendance history, shifts and leave.' },
   ]
-  const NAV_GROUPS = [['General', ['home', 'qm', 'explorer', 'reports']], ['Tools', ['team', 'kb', 'copilot']], ['Team feedback', ['suggestions']]]
+  const NAV_GROUPS = [['General', ['home', 'qm']], ['Reports', ['explorer', 'reports']], ['Tools', ['team', 'kb', 'copilot']], ['Team feedback', ['suggestions']]]
 
   // Pages register themselves here: S.pages.home = (route) => markup
   S.pages = S.pages || {}
@@ -113,9 +113,9 @@
         <div class="main">
           ${header(page, ws)}
           <main class="page" data-key="page-${route.page}-${route.key}">
-            ${!page.bare && html`<div class="page-head">
-              <h1>${page.title}</h1>
-              <p>${page.desc}</p>
+            ${!page.bare && !(page.noHead && page.noHead()) && html`<div class="page-head">
+              <div class="page-head-t"><h1>${page.title}</h1><p>${page.desc}</p></div>
+              ${page.aside && page.aside()}
             </div>`}
             ${!ws.home && html`<div class="callout accent ws-demo">${icon('info', 16)}<span><b>${ws.name} workspace (demo).</b> It runs the same modules as Solution Center for ${ws.groups.join(', ')}. This prototype only has Solution Center sample data, so that's what you see here.</span></div>`}
             ${body}
@@ -201,7 +201,7 @@
     </div>`
   }
 
-  const NOTIF_ICON = { sla: 'clock', approval: 'bolt', handover: 'clip', leave: 'cal', coverage: 'team', info: 'book', password: 'key', p1: 'alert', assign: 'user' }
+  const NOTIF_ICON = { rota: 'swap', shift: 'cal', sla: 'clock', approval: 'bolt', handover: 'clip', leave: 'cal', coverage: 'team', info: 'book', password: 'key', p1: 'alert', assign: 'user' }
   let notifList = []
 
   function notifications() {
@@ -244,7 +244,7 @@
             </button>`)}
         </div>
         <div class="muted small" style="padding:8px 14px;border-top:1px solid var(--line)">
-          ${st.role === 'lead' ? 'Manager view: SLA risk across the whole queue, fix approvals, handovers, leave and coverage.' : 'Analyst view: your SLA risk, new assignments, fix decisions and password reminders.'}
+          ${S.qm.me() && S.schedule && S.schedule.real() ? 'Rota gaps, leave clashes and schedule changes, plus tickets waiting or past SLA.' : st.role === 'lead' ? 'Manager view: SLA risk across the whole queue, fix approvals, handovers, leave and coverage.' : 'Analyst view: your SLA risk, new assignments, fix decisions and password reminders.'}
         </div>
       </div>`}
     </div>`
@@ -267,7 +267,7 @@
             <span class="muted small mono">${me.soeid} · ${me.role}</span>
           </div>
         </div>
-        ${real && today && html`<button role="menuitem" class="menu-item" data-click="sched.editOpen">${icon('edit', 16)}Change today's role or shift</button>`}
+        ${real && html`<button role="menuitem" class="menu-item" data-click="sched.editOpen">${icon('edit', 16)}${today ? "Change today's role or shift" : "Start today's shift"}</button>`}
         <button role="menuitem" class="menu-item" data-click="app.profile" data-v="settings">${icon('user', 16)}Account profile</button>
         <button role="menuitem" class="menu-item" data-click="app.profile" data-v="switch">${icon('swap', 16)}Switch workspace<span class="spacer"></span><span class="muted small">${ws.short}</span></button>
         <button role="menuitem" class="menu-item danger" data-click="app.profile" data-v="logout">${icon('logout', 16)}Log out</button>
@@ -281,78 +281,48 @@
   }
 
   // ---------- Sign in ----------
-  // Production sign-in is company SSO, which this prototype doesn't connect to;
-  // "Dev Login" signs in as a sample user for a chosen role.
-  const DEV_USERS = { lead: byId.a1, analyst: byId.a2 }
-
-  // Dev Login from the real team roster (data/roster.json): who → role this week → shift.
-  // Still no credentials (the honour system until SSO), but the person is real, so
-  // Queue Management can put their SOEID on everything they log. A Lead signs in with
-  // the Manager view, everyone else as an analyst. The rest of Scope keeps its sample data.
+  // Sign in from the team roster (data/roster.json). No password yet (the honour system
+  // until company SSO is connected), but the person is real, so Queue Management puts
+  // their SOEID on everything they log. Role and shift are never picked here: they come
+  // from Team Management (Proci rota and Schedule & coverage). A Lead gets the Manager view.
   const hasRoster = () => !!(S.qm && S.qm.roster.some((p) => p.active !== false))
-  const STEPS = ['Who', 'Role', 'Shift']
-  // Today's role from the Proci rota (rota.js), or null when the week isn't set.
-  const rotaRole = (p) => (p && S.rota ? S.rota.roleOf(p.soeid) : null)
+  // What Team Management says for this person today, in words.
+  function planLine(pl) {
+    if (pl.role === 'LEAVE') return { tone: 'warn', text: html`<b>On leave today.</b> You can still sign in; you won't get tickets.` }
+    if (pl.role === 'REST') return { tone: 'warn', text: html`<b>Rest day today.</b> You can still sign in; you won't get tickets.` }
+    if (pl.off) return { tone: 'warn', text: html`<b>Not scheduled today.</b> You can still sign in; you won't get tickets.` }
+    if (!pl.role || !pl.shift) {
+      const missing = [!pl.role && 'role (the Proci rota)', !pl.shift && 'shift'].filter(Boolean).join(' and ')
+      return { tone: 'warn', text: html`<b>Today's ${missing} isn't set in Team Management yet.</b> You can sign in, but you won't get tickets until a lead sets it or you start your shift from the profile menu.` }
+    }
+    return { tone: 'accent', text: html`Today: <b>${S.dutyLabel(pl.role)} · ${S.shiftLabel(pl.shift)} shift</b> <span class="muted">(${(S.SHIFTS.find((x) => x.id === pl.shift) || {}).times})</span>` }
+  }
   function rosterLogin(u) {
     const people = S.qm.roster.filter((p) => p.active !== false).sort((a, b) => a.name.localeCompare(b.name))
     const q = u.q.trim().toLowerCase()
     const list = people.filter((p) => !q || `${p.name} ${p.soeid}`.toLowerCase().includes(q))
     const who = people.find((p) => p.soeid === u.who)
-    const step = who ? u.step : 1
-    const first = who ? who.name.split(' ')[0] : ''
-    return html`<section class="signin-dev roster-login" aria-labelledby="dev-login-h">
-      <div class="row">
-        <b id="dev-login-h">Dev Login</b>
-        <span class="spacer"></span>
-        <span class="dash-chip">Team roster · no password</span>
+    const pl = who && S.schedule ? S.schedule.planFor(who.soeid) : null
+    const line = pl && planLine(pl)
+    return html`<section class="stack roster-login" aria-label="Pick your name">
+      <div class="kb-search roster-search">${icon('search', 16)}<input type="search" placeholder="Search name or SOEID" value="${u.q}" data-input="app.rosterQ" aria-label="Search the team roster" data-autofocus></div>
+      <div class="roster-list" role="listbox" aria-label="Team roster">
+        ${list.map((p) => html`<button class="${cls('roster-row', u.who === p.soeid && 'on')}" role="option" aria-selected="${u.who === p.soeid}" data-key="${p.soeid}" data-click="app.who" data-dblclick="app.rosterLogin" data-v="${p.soeid}">
+          <span class="avatar sm">${initials(p.name)}</span>
+          <span class="stack" style="gap:0;min-width:0"><b>${p.name}</b><span class="small muted mono">${p.soeid}</span></span>
+          <span class="spacer"></span>
+          <span class="${cls('pill', p.accessRole === 'Lead' ? 'accent' : '')}">${p.accessRole === 'Lead' ? 'Lead' : 'Analyst'}</span>
+        </button>`)}
+        ${!list.length && html`<div class="empty small">No one matches “${u.q}”.</div>`}
       </div>
-      <ol class="steps" aria-label="Sign-in steps">${STEPS.map((s, i) => html`<li class="${cls('step', i + 1 === step && 'on', i + 1 < step && 'done')}" ${attrs({ 'aria-current': i + 1 === step ? 'step' : null })}>
-        <span class="step-dot">${i + 1 < step ? icon('check', 13) : i + 1}</span><span class="step-l">${s}</span></li>`)}</ol>
-
-      ${step === 1 && html`<div class="stack" style="gap:10px">
-        <div class="stack" style="gap:2px"><b class="roster-q">Who are you?</b><span class="small muted">Select your name to continue.</span></div>
-        <div class="kb-search">${icon('search', 16)}<input type="search" placeholder="Search name or SOEID" value="${u.q}" data-input="app.rosterQ" aria-label="Search the team roster" data-autofocus></div>
-        <div class="roster-list" role="listbox" aria-label="Team roster">
-          ${list.map((p) => html`<button class="${cls('roster-row', u.who === p.soeid && 'on')}" role="option" aria-selected="${u.who === p.soeid}" data-key="${p.soeid}" data-click="app.who" data-dblclick="app.whoGo" data-v="${p.soeid}">
-            <span class="avatar sm">${initials(p.name)}</span>
-            <span class="stack" style="gap:0;min-width:0"><b>${p.name}</b><span class="small muted mono">${p.soeid}</span></span>
-            <span class="spacer"></span>
-            <span class="${cls('pill', p.accessRole === 'Lead' ? 'accent' : '')}">${p.accessRole === 'Lead' ? 'Lead' : 'Analyst'}</span>
-          </button>`)}
-          ${!list.length && html`<div class="empty small">No one matches “${u.q}”.</div>`}
-        </div>
-      </div>`}
-
-      ${step === 2 && html`<div class="stack" style="gap:10px">
-        <div class="stack" style="gap:2px"><b class="roster-q">Your role today, ${first}?</b><span class="small muted">${rotaRole(who) ? html`From the Proci rota: <b>${rotaRole(who) === 'LEAVE' ? "you're on leave today" : rotaRole(who) === 'REST' ? "it's your rest day" : S.dutyLabel(rotaRole(who))}</b>. The rota decides who gets EERS and the Proci duties.` : 'The weekly rota decides it. Pick Analyst if you have no Proci or weekend duty.'}</span></div>
-        <div class="choice-list" role="radiogroup" aria-label="Role this week">${S.DUTIES.map((d) => html`<button class="${cls('choice', u.duty === d.id && 'on')}" role="radio" aria-checked="${u.duty === d.id}" data-click="app.duty" data-v="${d.id}">
-          <b>${d.label}</b><span class="small muted">${d.desc}</span></button>`)}</div>
-      </div>`}
-
-      ${step === 3 && u.auto && html`<div class="stack" style="gap:10px">
-        <div class="stack" style="gap:2px"><b class="roster-q">Today you're set as</b><span class="small muted">From Team Management (Proci rota and schedule).</span></div>
-        <div class="choice on" aria-live="polite"><b>${S.dutyLabel(u.duty)} · ${S.shiftLabel(u.shift)} shift</b><span class="small muted">${(S.SHIFTS.find((x) => x.id === u.shift) || {}).times}</span></div>
-        <button class="btn ghost sm" style="align-self:flex-start" data-click="app.manual">Not right? Choose role and shift</button>
-      </div>`}
-      ${step === 3 && !u.auto && html`<div class="stack" style="gap:10px">
-        <div class="stack" style="gap:2px"><b class="roster-q">Which shift are you on today?</b><span class="small muted">Times follow the team's shift mode.</span></div>
-        <div class="choice-list" role="radiogroup" aria-label="Shift">${S.SHIFTS.map((s) => html`<button class="${cls('choice', u.shift === s.id && 'on')}" role="radio" aria-checked="${u.shift === s.id}" data-click="app.shift" data-v="${s.id}">
-          <b>${s.label}</b><span class="small muted">${s.times}</span></button>`)}</div>
-      </div>`}
-
-      <div class="row" style="gap:8px">
-        ${step > 1 && html`<button class="btn ghost" data-click="app.step" data-v="${step - 1}">Back</button>`}
-        <span class="spacer"></span>
-        ${step < 3 ? html`<button class="btn primary" data-click="app.step" data-v="${step + 1}" ${attrs({ disabled: step === 1 ? !who : !u.duty })}>Continue</button>`
-          : html`<button class="btn signin-devbtn" data-dev-login data-click="app.rosterLogin" ${attrs({ disabled: !u.shift })}>${icon('code', 15)}Dev Login as ${first}</button>`}
-      </div>
-      <button class="btn ghost sm signin-switch" data-click="app.sample" data-v="1">Use a sample user instead (demo)</button>
+      ${line && html`<div class="${cls('callout', line.tone)}" aria-live="polite">${icon(line.tone === 'accent' ? 'cal' : 'alert', 16)}<span>${line.text}</span></div>`}
+      <button class="btn primary" data-click="app.rosterLogin" ${attrs({ disabled: !who })}>${icon('logout', 15)}${who ? `Sign in as ${who.name.split(' ')[0]}` : 'Sign in'}</button>
     </section>`
   }
 
   function signInPage(ws) {
-    const u = S.ui('signin', { role: 'lead', ssoNote: false, sample: false, step: 1, q: '', who: null, duty: null, shift: null, auto: false, manual: false })
-    const user = DEV_USERS[u.role]
+    const u = S.ui('signin', { q: '', who: null })
+    const loading = S.qm && S.qm.online === null
     return html`<div class="signin">
       <main class="signin-main">
         <div class="signin-brand">
@@ -372,34 +342,12 @@
             <span class="spacer"></span>
             <button class="btn ghost sm" data-click="app.changeWs">Change</button>
           </div>
-          <div class="stack" style="gap:4px">
-            <h1>Sign in</h1>
-            <p class="ink2">Use your company account to open ${ws.name}.</p>
-          </div>
-          ${app.signedOut && html`<div class="callout">${icon('check', 16)}<span>You're signed out. Your open tickets stay assigned, and fair-share skips you until you're back online.</span></div>`}
-          <button class="btn primary signin-sso" data-click="app.sso">${icon('shield', 16)}Continue with SSO</button>
-          ${u.ssoNote && html`<div class="callout warn" role="status">${icon('alert', 16)}<span>SSO isn't connected in this prototype yet. Use Dev Login below.</span></div>`}
-          <div class="signin-or"><span>or</span></div>
-          ${hasRoster() && !u.sample ? rosterLogin(u) : html`<section class="signin-dev" aria-labelledby="dev-login-h">
-            <div class="row">
-              <b id="dev-login-h">Dev Login</b>
-              <span class="spacer"></span>
-              <span class="dash-chip">Prototype only</span>
-            </div>
-            <span class="small muted">Signs in as a sample user. No credentials needed. Remove before release.</span>
-            ${hasRoster() ? html`<button class="btn ghost sm signin-switch" data-click="app.sample" data-v="">${icon('team', 14)}Sign in from the team roster instead</button>`
-              : html`<span class="small muted">${S.qm && S.qm.online === null ? 'Looking for the team roster…' : 'No team roster on this server, so only sample users are available. Queue Management needs a roster name.'}</span>`}
-            ${seg([{ id: 'analyst', label: 'Analyst' }, { id: 'lead', label: 'Manager' }], u.role, 'app.signinRole')}
-            <span class="small muted">${u.role === 'lead' ? 'Everything an analyst has, plus the whole-team view, the Suggestions board and prototype controls.' : 'Your own queue and tools. You can still send suggestions with the Suggest button.'}</span>
-            <div class="row" style="flex-wrap:nowrap;gap:10px">
-              <span class="avatar">${initials(user.name)}</span>
-              <div class="stack" style="gap:0;min-width:0">
-                <b>${user.name}</b>
-                <span class="small muted"><span class="mono">${user.soeid}</span> · ${user.role}</span>
-              </div>
-            </div>
-            <button class="btn signin-devbtn" data-dev-login data-click="app.devLogin">${icon('code', 15)}Dev Login as ${user.name.split(' ')[0]}</button>
-          </section>`}
+          <h1>Sign in</h1>
+          ${hasRoster() ? rosterLogin(u)
+            : loading ? html`<div class="muted small">Loading the team roster…</div>`
+            : html`<div class="callout warn">${icon('alert', 16)}<span>${location.protocol === 'file:'
+              ? html`<b>Scope needs its server to sign you in.</b> Close this tab and start Scope with <span class="code-chip">run.bat</span> (or <span class="code-chip">share.bat</span> for the team).`
+              : html`<b>No team roster on this server.</b> The lead copies <span class="code-chip">data\\roster.example.json</span> to <span class="code-chip">data\\roster.json</span> on the host, fills in the team, then reloads this page.`}</span></div>`}
         </div>
         <span class="small muted">Internal tool · authorised users only</span>
       </main>
@@ -534,39 +482,18 @@
     'app.pickWs': (el) => pickWs(el.dataset.v),
     'app.wsNew': () => { const u = S.ui('wsPicker'); S.set(u, { newNote: !u.newNote }) },
     'app.changeWs': () => { app.signedOut = false; pickWs(null) },
-    'app.sso': () => S.set(S.ui('signin'), { ssoNote: true }),
-    'app.signinRole': (el) => S.set(S.ui('signin'), { role: el.dataset.v }),
-    'app.devLogin': () => { S.qm.signOut(); signIn(S.ui('signin').role) },
-    'app.sample': (el) => S.set(S.ui('signin'), { sample: !!el.dataset.v }),
     'app.rosterQ': (el) => S.set(S.ui('signin'), { q: el.value }),
     'app.who': (el) => S.set(S.ui('signin'), { who: el.dataset.v }),
-    'app.whoGo': (el) => S.set(S.ui('signin'), { who: el.dataset.v, step: 2 }),
-    'app.step': (el) => {
+    // Sign in with today's role and shift from Team Management. When it has none (not
+    // set, rest day, leave), sign in without going on shift: no tickets until it's set.
+    'app.rosterLogin': (el) => {
       const u = S.ui('signin')
-      const step = +el.dataset.v
-      // After "Who": when Team Management already has today's role and shift, skip
-      // straight to a confirmation (auto). Otherwise preselect what the rota says.
-      if (step === 2 && !u.manual && S.schedule && S.schedule.real()) {
-        const pl = S.schedule.planFor(u.who)
-        if (pl.ready) { S.set(u, { step: 3, auto: true, duty: pl.role, shift: pl.shift }); return }
-      }
-      const r = step === 2 && !u.duty && S.rota ? S.rota.roleOf(u.who) : null
-      const duty = r && r !== 'LEAVE' && r !== 'REST' ? r : u.duty
-      S.set(u, { step, auto: false, duty, shift: duty === 'WEEKEND_SUPPORT' ? 'WEEKEND' : u.shift })
-    },
-    'app.manual': () => S.set(S.ui('signin'), { step: 2, auto: false, manual: true }),
-    'app.duty': (el) => {
-      // Weekend Support works the weekend at Early hours, so preselect that shift.
-      const u = S.ui('signin')
-      S.set(u, { duty: el.dataset.v, shift: el.dataset.v === 'WEEKEND_SUPPORT' ? 'WEEKEND' : u.shift })
-    },
-    'app.shift': (el) => S.set(S.ui('signin'), { shift: el.dataset.v }),
-    'app.rosterLogin': () => {
-      const u = S.ui('signin')
-      const p = S.qm.roster.find((x) => x.soeid === u.who)
-      if (!p || !u.duty || !u.shift) return
-      S.qm.signIn(p.soeid, u.duty, u.shift, { auto: !!u.auto })
-      Object.assign(u, { step: 1, q: '', who: null, duty: null, shift: null, auto: false, manual: false })
+      const p = S.qm.roster.find((x) => x.soeid === (el.dataset.v || u.who))
+      if (!p) return
+      const pl = S.schedule ? S.schedule.planFor(p.soeid) : { ready: false }
+      if (pl.ready) S.qm.signIn(p.soeid, pl.role, pl.shift, { auto: true })
+      else S.qm.signInOnly(p.soeid)
+      Object.assign(u, { q: '', who: null })
       signIn(p.accessRole === 'Lead' ? 'lead' : 'analyst')
     },
     'dev.tour': () => { S.pop = null; S.dispatch({ type: 'tourStart' }) },

@@ -259,6 +259,9 @@ const currentUser = (state) => byId[state.role === 'lead' ? 'a1' : 'a2']
 // Notifications are a mix of events (things that happened) and conditions
 // derived live from the queue, approvals and vault (things that need action).
 function buildNotifications(state) {
+  // Signed in from the real roster: the bell shows the team's real rota, schedule and tickets.
+  const live = S.liveNotifications && S.liveNotifications()
+  if (live) return live
   const me = currentUser(state)
   const out = []
   const open = state.tickets.filter((t) => t.state !== 'Resolved')

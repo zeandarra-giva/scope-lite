@@ -58,6 +58,9 @@
     storage.set(ME_KEY, soeid); storage.set(TODAY_KEY, JSON.stringify({ duty, shift, day: dayKey() }))
     send({ type: 'shiftStart', day: isoDay(), duty, shift, auto })
   }
+  // Signed in without going on shift (Team Management has no role or shift for today).
+  qm.signInOnly = (soeid) => { storage.set(ME_KEY, soeid); storage.set(TODAY_KEY, null) }
+  qm.team = { drawers: (m) => drawers(m), verify: () => verifyPanel(), all: () => allPanel(), pending: () => toVerify().length }
   // Guardrail (schedule.js): changing today's role or shift after signing in needs a
   // reason, and is recorded like any other event, so the team can see it.
   qm.changeToday = async (duty, shift, reason) => {
@@ -165,9 +168,8 @@
     const { inc, errors } = check(f)
     const err = (k) => f.tried && errors[k] && html`<span class="qm-err" role="alert">${errors[k]}</span>`
     const dups = INC_RE.test(inc) ? qm.entries.filter((x) => x.inc === inc && x.status !== 'Withdrawn') : []
-    return html`<div class="card"><div class="card-b">
-      <form class="stack" style="gap:14px" data-submit="qm.submit" id="qm-form">
-        <div class="form-grid qm-form-top">
+    return html`<form class="stack" style="gap:14px" data-submit="qm.submit" id="qm-form">
+        <div class="stack" style="gap:14px">
           <label class="field"><span>INC number</span>
             <input class="in mono" name="inc" maxlength="20" autocomplete="off" spellcheck="false" value="${f.inc}" placeholder="INC0012345" data-input="qm.field" data-autofocus>
             ${err('inc')}</label>
@@ -185,13 +187,22 @@
           <textarea class="in" name="reason" rows="2" maxlength="1000" placeholder="Why this ticket isn't assigned to you or your queue" data-input="qm.field" data-keydown="qm.keys">${f.reason}</textarea>
           ${err('reason')}</label>
         <div class="row">
-          <span class="small muted">${icon('shield', 14)} Don't paste passwords or customers' personal details. <span class="kbd">Ctrl</span> + <span class="kbd">Enter</span> logs it.</span>
           <span class="spacer"></span>
           <button class="btn ghost" type="button" data-click="qm.clear">Clear</button>
           <button class="btn primary" type="submit" ${attrs({ disabled: f.sending })}>${icon('plus', 15)}${f.sending ? 'Logging…' : 'Log ticket'}</button>
         </div>
-      </form>
-    </div></div>`
+        <span class="small muted">${icon('shield', 14)} Don't paste passwords or customers' personal details. <span class="kbd">Ctrl</span> + <span class="kbd">Enter</span> logs it.</span>
+      </form>`
+  }
+  // The form opens as a panel from the right (My manual entries → Log a manual entry).
+  function logDrawer() {
+    S.drawer({
+      className: 'qm-drawer qm-log',
+      onClose: 'qm.logClose',
+      title: html`<h2 class="drawer-title">Log a manual entry</h2>`,
+      sub: html`<span class="muted small">An INC you handled that wasn't assigned to you. A lead verifies it before it counts.</span>`,
+      body: logForm(),
+    })
   }
 
   async function submit() {
@@ -202,6 +213,7 @@
     const sent = await send({ type: 'manualIncAdd', id: uid('mi'), inc, handledAt: when, actions: f.actions.trim(), reason: f.reason.trim(), group: f.group.trim() })
     if (!sent) { S.set(f, { sending: false }); return }
     S.set(f, blankForm())
+    S.set(page(), { log: false })
     S.dispatch({ type: 'toast', text: `${inc} logged. A lead will verify it.` })
   }
 
@@ -210,7 +222,7 @@
     if (!list.length) return html`<div class="empty">${empty}</div>`
     return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl">
       <thead><tr><th>INC</th><th>Handled</th>${who && html`<th>Analyst</th>`}<th>Reason</th><th>Status</th></tr></thead>
-      <tbody>${list.map((x) => html`<tr data-key="${x.id}" class="${cls(S.ui('p:qm').sel === x.id && 'sel')}">
+      <tbody>${list.map((x) => html`<tr data-key="${x.id}" class="${cls(page().sel === x.id && 'sel')}">
         <td><button class="btn ghost sm mono" data-click="qm.select" data-v="${x.id}">${x.inc}</button></td>
         <td class="nowrap">${fmtWhen(x.handledAt)}</td>
         ${who && html`<td>${nameOf(x.by)}</td>`}
@@ -263,7 +275,7 @@
   }
 
   function exportCsv() {
-    const u = S.ui('p:qm')
+    const u = page()
     const q = u.q.trim().toLowerCase()
     const list = qm.entries
       .filter((x) => u.status === 'all' || x.status === u.status)
@@ -318,61 +330,72 @@
   }
 
   // ---------- Page ----------
+  // Shared by Queue Management and Home (the team tabs and the drawers they open).
+  // A bell notification can open a ticket (route.ticket) or a tab (route.tab).
+  const page = () => S.ui('p:qm', () => ({ tab: S.route.tab || 'tickets', log: false, sel: null, tsel: S.route.ticket || null, tnote: '', moveTo: '', q: '', status: 'all', who: 'all', note: '', noteTried: false }))
+
+  // Whichever drawer is open (a manual entry or a ticket), on either page.
+  function drawers(m) {
+    const u = page()
+    if (u.log) return logDrawer()
+    const sel = u.sel && qm.entries.find((x) => x.id === u.sel)
+    if (sel) return entryDrawer(sel, u)
+    const t = u.tsel && S.queue.view().tickets.find((x) => x.n === u.tsel)
+    if (t) S.queue.ticketDrawer(t, m) // also shows the resolution journey when it's open
+    else if (S.liveResolve) S.liveResolve.modal()
+  }
+  // Team-scoped manual-entry panels for Home (leads only).
+  const verifyPanel = () => table(toVerify().slice().sort((a, b) => a.at - b.at), { who: true, empty: 'Nothing to verify. All caught up.' })
+  const allPanel = () => allEntries(page())
+
   function notice(tone, ic, body, action) {
     return html`<div class="callout ${tone}">${icon(ic, 16)}<span>${body}</span>${action && html`<span class="spacer"></span>${action}`}</div>`
   }
 
   S.pages.qm = function qmPage() {
-    const u = S.ui('p:qm', { tab: 'tickets', sel: null, tsel: null, tnote: '', moveTo: '', q: '', status: 'all', who: 'all', note: '', noteTried: false })
+    const u = page()
     if (location.protocol === 'file:') return notice('warn', 'info', html`<b>Queue Management works on real team data, so it needs the Scope Lite server.</b> Close this tab and start Scope with <span class="code-chip">run.bat</span> (or <span class="code-chip">share.bat</span> for the team).`)
     if (qm.online === null) return html`<div class="card"><div class="card-b empty">Loading…</div></div>`
     if (!qm.loadedAt) return notice('crit', 'alert', qm.error, html`<button class="btn sm" data-click="qm.reload">${icon('refresh', 14)}Retry</button>`)
     if (!qm.roster.length) return notice('warn', 'team', html`<b>No team roster yet.</b> The lead copies <span class="code-chip">data\\roster.example.json</span> to <span class="code-chip">data\\roster.json</span> on the host, fills in the team (SOEID, name, Lead or Analyst), then reloads this page.`)
     const m = me()
-    if (!m) return notice('warn', 'user', html`<b>Queue Management needs your name from the team roster.</b> You're signed in as a sample user. Log out, then sign in with <b>Dev Login</b> and pick your name.`, html`<button class="btn sm" data-click="app.profile" data-v="logout">${icon('logout', 14)}Log out</button>`)
-    const t = today()
+    if (!m) return notice('warn', 'user', html`<b>Queue Management needs your name from the team roster.</b> Log out, then sign in and pick your name.`, html`<button class="btn sm" data-click="app.profile" data-v="logout">${icon('logout', 14)}Log out</button>`)
 
-    const lead = m.accessRole === 'Lead'
-    const tab = !lead && (u.tab === 'verify' || u.tab === 'all') ? 'tickets' : u.tab
+    const tab = ['mine', 'strike'].includes(u.tab) ? u.tab : 'tickets'
     const mine = qm.entries.filter((x) => x.by === m.soeid)
     const from = startOfMonth()
-    const sel = u.sel && qm.entries.find((x) => x.id === u.sel)
-    if (sel) entryDrawer(sel, u)
+    drawers(m)
     const Q = S.queue
-    const tsel = u.tsel && Q.view().tickets.find((t) => t.n === u.tsel)
-    if (tsel && !sel) Q.ticketDrawer(tsel, m)
-    const myOpen = Q.view().tickets.filter((t) => Q.owner(t) === m.soeid && Q.isOpen(t)).length
+    const myOpen = Q.view().tickets.filter((t) => Q.workingOn(t, m.soeid)).length
     const handled = Q.loadToday(m.soeid)
 
     return html`
       ${qm.error && notice('crit', 'alert', qm.error, html`<button class="btn sm" data-click="qm.reload">${icon('refresh', 14)}Retry</button>`)}
-      <div class="callout accent qm-live">${icon('team', 16)}<span><b>Live team data.</b> Signed in as <b>${m.name}</b> <span class="mono">${m.soeid}</span>${lead && ' (Lead)'}${t && html` · ${S.dutyLabel(t.duty)}, ${S.shiftLabel(t.shift)} shift`}. Everyone on this server sees the same tickets and entries. The rest of Scope still shows sample data.</span></div>
       <div class="grid g-kpi">
         ${S.kpi({ label: 'Handled today', icon: 'check', tone: 'good', value: handled.total, foot: `${handled.tickets} tickets · ${handled.manual} verified manual` })}
-        ${S.kpi({ label: 'Still open on me', icon: 'clock', tone: 'sky', value: myOpen, foot: 'Assigned or On Hold', extra: { 'data-click': 'qm.tab', 'data-v': 'tickets', style: 'cursor:pointer' } })}
+        ${S.kpi({ label: 'Still open on me', icon: 'clock', tone: 'sky', value: myOpen, foot: 'Still to work (On Hold ones are in 3-Strike)', extra: { 'data-click': 'qm.tab', 'data-v': 'tickets', style: 'cursor:pointer' } })}
         ${S.kpi({ label: 'Manual entries verified', icon: 'shield', tone: 'navy', value: mine.filter((x) => verifiedAt(x) >= from).length, foot: `This month · ${mine.filter((x) => x.status === 'Pending').length} waiting for a lead` })}
-        ${lead && S.kpi({ label: 'To verify', icon: 'shield', tone: 'warn', value: toVerify().length, foot: 'Team entries waiting for you', extra: { 'data-click': 'qm.tab', 'data-v': 'verify', style: 'cursor:pointer' } })}
       </div>
       ${S.tabs([
         { id: 'tickets', label: 'My tickets', icon: 'user', count: myOpen },
-        { id: 'queue', label: 'Team queue', icon: 'list' },
-        { id: 'log', label: 'Log a manual entry', icon: 'plus' },
+        { id: 'strike', label: '3-Strike', icon: 'clock', count: S.strike.pendingFor(m) },
         { id: 'mine', label: 'My manual entries', icon: 'doc', count: mine.length },
-        ...(lead ? [{ id: 'verify', label: 'To verify', icon: 'shield', count: toVerify().length }, { id: 'all', label: 'All manual entries', icon: 'table' }] : []),
       ], tab, 'qm.tab')}
       ${tab === 'tickets' && Q.myTickets(m)}
-      ${tab === 'queue' && Q.teamQueue(m)}
-      ${tab === 'log' && logForm()}
-      ${tab === 'mine' && html`<div class="card">${table(mine, { empty: 'You haven\'t logged any tickets yet.' })}</div>`}
-      ${tab === 'verify' && html`<div class="card">${table(toVerify().slice().sort((a, b) => a.at - b.at), { who: true, empty: 'Nothing to verify. All caught up.' })}</div>`}
-      ${tab === 'all' && allEntries(u)}
+      ${tab === 'strike' && S.strike.analystTab(m)}
+      ${tab === 'mine' && html`<div class="stack" style="gap:12px">
+        <div class="row"><span class="small muted">Tickets you handled outside your queue. A lead verifies each one before it counts.</span><span class="spacer"></span>
+          <button class="btn primary" data-click="qm.logOpen">${icon('plus', 15)}Log a manual entry</button></div>
+        ${table(mine, { empty: 'You haven\'t logged any tickets yet.' })}
+      </div>`}
       <div class="muted small">${qm.loadedAt && html`Updated ${S.fmtTime(qm.loadedAt)} · refreshes every 15 seconds`}</div>`
   }
 
   // ---------- Handlers ----------
-  const page = () => S.ui('p:qm')
   S.on({
     'qm.tab': (el) => S.set(page(), { tab: el.dataset.v, sel: null, tsel: null }),
+    'qm.logOpen': () => S.set(page(), { log: true, sel: null, tsel: null }),
+    'qm.logClose': () => S.set(page(), { log: false }),
     'qm.field': (el) => { const f = form(); f[el.name] = el.value; if (el.name === 'inc' || f.tried) S.render() },
     'qm.keys': (el, ev) => { if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey)) { ev.preventDefault(); submit() } },
     'qm.submit': () => submit(),

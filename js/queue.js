@@ -10,6 +10,10 @@
 //    the rest to whoever has handled the fewest tickets today, among the people on
 //    shift and before their cutoff. Every assignment carries its reason. Tickets
 //    already assigned in ServiceNow are skipped and count for that person.
+//    With "Hand out automatically" on (Team settings), any signed-in browser hands out
+//    new unassigned tickets as soon as someone is on shift, so nobody has to press a button.
+//  - Rebalance (lead): moves still-untouched tickets so today's handled counts are even,
+//    and moves tickets off people who are past their cutoff, signed out or on leave.
 //  - My tickets: a working view. The owner tags each ticket (Assigned / On Hold /
 //    Transferred / Resolved) and adds notes. Transferred counts as handled (D17).
 //
@@ -37,8 +41,11 @@
     { key: 'early.end', group: 'Shifts', label: 'Early shift ends', type: 'time', def: '14:00' },
     { key: 'late.start', group: 'Shifts', label: 'Late shift starts', type: 'time', def: '06:00' },
     { key: 'late.end', group: 'Shifts', label: 'Late shift ends', type: 'time', def: '15:00' },
+    { key: 'minEarly', group: 'Shifts', label: 'At least on Early', unit: 'people, each weekday', type: 'num', def: 2 },
+    { key: 'minLate', group: 'Shifts', label: 'At least on Late', unit: 'people, each weekday', type: 'num', def: 1 },
     { key: 'cutoffMinutes', group: 'Shifts', label: 'Stop handing out tickets', unit: 'minutes before the shift ends', type: 'num', def: 30 },
     { key: 'eersKeywords', group: 'Assignment', label: 'EERS keywords', unit: 'whole words, comma-separated, in the short description or description', type: 'text', def: 'EERS, entitlement, entitlements' },
+    { key: 'autoHandout', group: 'Assignment', label: 'Hand out new tickets automatically', unit: 'as soon as someone is on shift', type: 'bool', def: true },
     { key: 'pool.mainProci', group: 'Assignment', label: 'Main Proci gets regular tickets', type: 'bool', def: true },
     { key: 'pool.backup', group: 'Assignment', label: 'Proci Backup gets regular tickets too', type: 'bool', def: true },
     { key: 'uploadReminder', group: 'Data', label: 'Remind to load a new export after', unit: 'minutes', type: 'num', def: 45 },
@@ -53,6 +60,23 @@
   const isLead = (soeid) => ((qm.roster.find((p) => p.soeid === soeid) || {}).accessRole === 'Lead')
   const dayOf = (ms) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
   const norm = (s) => String(s || '').toLowerCase().replace(/\s+/g, ' ').trim()
+
+  // ---------- 3-Strike ----------
+  // Strikes done: the higher of what Scope logged since the ticket went On Hold and
+  // "Contact attempt N" in the ServiceNow short description (the team writes it there).
+  const ATTEMPT_RE = /contact\s*attempt\s*#?\s*([123])/i
+  function strikeCount(t) {
+    const m = ATTEMPT_RE.exec(t.short || '')
+    const logged = t.strike ? t.strike.logs.filter((x) => !x.reached).length : 0
+    return Math.max(m ? Number(m[1]) : 0, logged)
+  }
+  // Who approves the day's 3-Strike distribution: the day's Proci Backup (QM duty),
+  // Weekend Support at the weekend, or a lead.
+  function canApproveStrikes(soeid, day) {
+    if (isLead(soeid)) return true
+    const r = S.rota && S.rota.dayRoles(day)
+    return !!r && (r.backup === soeid || r.weekend === soeid)
+  }
 
   function fold(events) {
     const undone = new Set(events.filter((ev) => ev.e && ev.e.type === 'importUndo').filter((ev) => {
@@ -96,7 +120,37 @@
         }
       } else if (e.type === 'ticketTag' && TAGS.includes(e.tag)) {
         const t = tickets.get(e.n)
-        if (t && (ev.by === owner(t) || isLead(ev.by))) { t.history.push({ what: `tagged ${e.tag}`, by: ev.by, at: ev.at, note: '' }); Object.assign(t, { tag: e.tag, tagAt: ev.at, tagBy: ev.by }) }
+        if (t && (ev.by === owner(t) || isLead(ev.by))) {
+          const res = e.tag === 'Resolved' && e.res && typeof e.res === 'object' && /^[A-Z]{2,5}-[A-Z]{2,5}-\d{2,3}$/.test(e.res.code || '') ? { ...e.res, by: ev.by, at: ev.at } : null
+          t.history.push({ what: `tagged ${e.tag}${res ? ` with ${res.code}` : ''}`, by: ev.by, at: ev.at, note: '' })
+          Object.assign(t, { tag: e.tag, tagAt: ev.at, tagBy: ev.by, res: e.tag === 'Resolved' ? res : null })
+          // On Hold starts (or restarts) the 3-Strike follow-up (vault: 3-Strike Process).
+          t.strike = e.tag === 'On Hold' ? { logs: [], to: null, day: null, by: null } : null
+        }
+      } else if (e.type === 'strikeAssign' && e.day && Array.isArray(e.list) && canApproveStrikes(ev.by, e.day)) {
+        // The day's 3-Strike distribution, approved by the Proci Backup (QM), Weekend Support or a lead.
+        for (const a of e.list) {
+          const t = a && tickets.get(a.n)
+          if (!t || !t.strike || !qm.roster.some((p) => p.soeid === a.to)) continue
+          Object.assign(t.strike, { to: a.to, day: e.day, by: ev.by })
+          t.history.push({ what: `3-Strike for ${e.day} given to ${nameOf(a.to)}`, by: ev.by, at: ev.at, note: '' })
+        }
+      } else if (e.type === 'strikeLog') {
+        // A contact attempt: reached = back to work with the owner; not reached = next
+        // strike; not reached on Strike 3 = Resolved (the user wasn't reached).
+        const t = tickets.get(e.n)
+        if (!t || !t.strike || t.tag !== 'On Hold' || !(ev.by === t.strike.to || ev.by === owner(t) || isLead(ev.by))) continue
+        const n = strikeCount(t) + 1
+        t.strike.logs.push({ strike: n, reached: !!e.reached, by: ev.by, at: ev.at, day: dayOf(ev.at), note: String(e.note || '').trim() })
+        if (e.reached) {
+          t.history.push({ what: `reached the user on Strike ${n}; back to ${nameOf(owner(t))}`, by: ev.by, at: ev.at, note: '' })
+          Object.assign(t, { tag: 'Assigned', tagAt: ev.at, tagBy: ev.by, strike: null })
+        } else if (n >= 3) {
+          t.history.push({ what: 'Strike 3: user not reached, Resolved', by: ev.by, at: ev.at, note: '' })
+          Object.assign(t, { tag: 'Resolved', tagAt: ev.at, tagBy: ev.by, res: null, strikeClosed: true })
+        } else {
+          t.history.push({ what: `Strike ${n}: user not reached`, by: ev.by, at: ev.at, note: '' })
+        }
       } else if (e.type === 'ticketNote' && String(e.text || '').trim()) {
         const t = tickets.get(e.n)
         if (t) t.notes.push({ by: ev.by, at: ev.at, text: String(e.text).trim() })
@@ -104,7 +158,16 @@
     }
     const latest = [...imports.values()].pop() || null
     for (const t of tickets.values()) t.inLatest = !!latest && t.lastImport === latest.id
-    return { settings, settingsLog, presence, tickets: [...tickets.values()], imports: [...imports.values()], latest, undone }
+    // Resolution code library, built only from real resolutions (the first use of a code names it).
+    const codes = new Map()
+    for (const t of tickets.values()) {
+      if (!t.res) continue
+      const c = codes.get(t.res.code) || { code: t.res.code, cause: t.res.cause, sub: t.res.sub, title: t.res.title, runbook: t.res.runbook || '', uses: 0, first: t.res.at, tickets: [] }
+      if (t.res.at < c.first) Object.assign(c, { title: t.res.title, runbook: t.res.runbook || '', first: t.res.at })
+      c.uses++; c.tickets.push(t.n)
+      codes.set(c.code, c)
+    }
+    return { settings, settingsLog, presence, tickets: [...tickets.values()], imports: [...imports.values()], latest, undone, codes: [...codes.values()].sort((a, b) => a.code.localeCompare(b.code)) }
   }
   function view() {
     if (memo.events !== qm.events || memo.roster !== qm.roster) memo = { events: qm.events, roster: qm.roster, v: fold(qm.events || []) }
@@ -205,6 +268,72 @@
     }
     return p
   }
+
+  // ---------- Rebalance (lead) ----------
+  // Pure. Two kinds of move, both only for tickets Scope assigned that are still tagged
+  // Assigned (On Hold means someone is working it; ServiceNow-assigned ones stay put):
+  //  1. Off people who no longer get tickets (past cutoff, signed out, on leave).
+  //  2. From whoever handled the most today to whoever handled the fewest, until the
+  //     gap is 1 or less. Only tickets handed out today move here, so each move takes
+  //     one off the giver's count and adds one to the receiver's.
+  // EERS tickets only move to a Proci Backup.
+  function rebalancePlan({ tickets, people, now, load }) {
+    const pool = people.filter((p) => now < p.w.cutoff)
+    const inPool = new Set(pool.map((p) => p.soeid))
+    const counts = new Map(pool.map((p) => [p.soeid, load(p.soeid)]))
+    const backups = pool.filter((p) => p.duty === 'PROCI_BACKUP')
+    const from = startOfDay(now)
+    const movable = tickets.filter((t) => t.inLatest && t.to && t.tag === 'Assigned')
+    const least = (list) => list.slice().sort((a, b) => counts.get(a.soeid) - counts.get(b.soeid) || a.person.name.localeCompare(b.person.name))[0]
+    const moves = []
+    for (const t of movable.filter((x) => !inPool.has(x.to))) {
+      const who = least(t.eers && backups.length ? backups : pool)
+      if (!who) break
+      moves.push({ n: t.n, from: t.to, to: who.soeid, reason: `Rebalanced: ${nameOf(t.to)} no longer gets tickets; ${who.person.name} had handled the fewest today (${counts.get(who.soeid)})` })
+      counts.set(who.soeid, counts.get(who.soeid) + 1)
+    }
+    const moved = new Set(moves.map((m) => m.n))
+    const stuck = new Set() // people with nothing left that can move
+    for (let guard = 0; guard < 500 && pool.length > 1; guard++) {
+      const sorted = pool.slice().sort((a, b) => counts.get(b.soeid) - counts.get(a.soeid) || a.person.name.localeCompare(b.person.name))
+      const hi = sorted.find((p) => !stuck.has(p.soeid))
+      const lo = sorted[sorted.length - 1]
+      if (!hi || hi === lo || counts.get(hi.soeid) - counts.get(lo.soeid) <= 1) break
+      const t = movable.filter((x) => x.to === hi.soeid && !moved.has(x.n) && !x.eers && x.assignedAt >= from).sort((a, b) => (b.p || 9) - (a.p || 9) || b.assignedAt - a.assignedAt)[0]
+      if (!t) { stuck.add(hi.soeid); continue } // nothing of theirs can move; look at the next person
+      moves.push({ n: t.n, from: hi.soeid, to: lo.soeid, reason: `Rebalanced: ${hi.person.name} had handled ${counts.get(hi.soeid)} today, ${lo.person.name} ${counts.get(lo.soeid)}` })
+      moved.add(t.n)
+      counts.set(hi.soeid, counts.get(hi.soeid) - 1)
+      counts.set(lo.soeid, counts.get(lo.soeid) + 1)
+    }
+    return { moves, pool }
+  }
+  function rebalancePreview(now = Date.now()) {
+    const v = view()
+    return rebalancePlan({ tickets: v.tickets, people: onShift(now), now, load: (s) => loadToday(s, now, v.tickets).total })
+  }
+  async function rebalance() {
+    const handed = await handOut(null)
+    const p = rebalancePreview()
+    if (p.moves.length) await qm.send({ type: 'ticketsAssigned', override: true, list: p.moves.map(({ n, to, reason }) => ({ n, to, reason })) })
+    return { handed: handed.list.length, moved: p.moves.length }
+  }
+
+  // ---------- Automatic hand-out ----------
+  // After every render (new data arrives every 15 s), if there are unassigned tickets and
+  // someone on shift can take them, hand them out. One attempt at a time per browser,
+  // at most every 10 s; the log's first-assignment-wins rule absorbs two browsers racing.
+  let autoBusy = false; let autoLast = 0
+  S.after(() => {
+    if (autoBusy || !qm.online || !qm.me() || Date.now() - autoLast < 10e3) return
+    const v = view()
+    if (v.settings.autoHandout === false || v.settings.autoHandout === 'false') return
+    if (!v.tickets.some((t) => t.inLatest && !t.to && !t.sn && t.tag === 'Assigned')) return
+    const now = Date.now()
+    if (!plan({ tickets: v.tickets, people: onShift(now), settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return
+    autoBusy = true; autoLast = now
+    handOut(null).then((p) => { if (p.list.length) S.dispatch({ type: 'toast', text: `Handed out ${p.list.length} new ticket${p.list.length > 1 ? 's' : ''} automatically` }) }).finally(() => { autoBusy = false })
+  })
 
   // ---------- CSV import ----------
   // RFC 4180: quoted fields, doubled quotes, line breaks inside quotes.
@@ -312,7 +441,7 @@
   }
 
   // ---------- UI helpers ----------
-  const imp = () => S.ui('p:qm:import', { busy: false, error: null, preview: null, last: null, drag: false })
+  const imp = () => S.ui('p:qm:import', { open: false, busy: false, error: null, preview: null, last: null, drag: false })
   const fmtWhen = (ms) => (ms ? new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—')
   const fmtAgo = (ms) => { const m = Math.round(ms / 60e3); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.floor(m / 1440)} days` }
   const tagPill = (tag) => html`<span class="${cls('pill', TAG_TONE[tag])}">${tag}</span>`
@@ -332,36 +461,39 @@
   }
 
   // ---------- My tickets (D13) ----------
+  // My tickets: a plain table of what I still have to work, longest untouched first.
+  // Setting a status moves it out: On Hold → the 3-Strike queue (Home), Transferred out,
+  // Resolved → the resolution journey first.
+  const workingOn = (t, soeid) => owner(t) === soeid && t.inLatest && t.tag === 'Assigned'
   function myTickets(me) {
     const v = view()
-    const u = S.ui('p:qm:mine-t', { show: 'open' })
-    const mine = v.tickets.filter((t) => owner(t) === me.soeid)
-    const today = startOfDay(Date.now())
-    const list = mine.filter((t) => (u.show === 'open' ? isOpen(t) : u.show === 'today' ? (t.to ? t.assignedAt : t.firstSeen) >= today : true))
+    const list = v.tickets.filter((t) => workingOn(t, me.soeid))
       .sort((a, b) => health(b, v.settings).untouched - health(a, v.settings).untouched)
-    return html`<div class="card">
-      <div class="card-h qm-toolbar">
-        <b>My tickets</b>
-        <span class="muted small">Tag each ticket as you work it. Everyone sees the tags straight away.</span>
-        <span class="spacer"></span>
-        <select class="in" aria-label="Show" data-change="queue.show">
-          ${[['open', 'Still open'], ['today', 'Handed to me today'], ['all', 'All my tickets']].map(([k, l]) => html`<option value="${k}" ${attrs({ selected: u.show === k })}>${l}</option>`)}
-        </select>
-      </div>
-      ${list.length ? ticketTable(list, v.settings, { mine: true }) : html`<div class="empty">${!v.latest ? 'No tickets yet. They appear here once someone loads the ServiceNow export on the Team queue tab.' : u.show === 'open' ? 'Nothing open on you.' : 'No tickets here.'}</div>`}
-    </div>`
+    return list.length ? ticketTable(list, v.settings, { mine: true })
+      : html`<div class="empty">${!v.latest ? 'No tickets yet. They appear here once someone loads the ServiceNow export on Home.' : 'Nothing open on you.'}</div>`
   }
 
-  function ticketTable(list, s, { mine = false } = {}) {
+  function ticketTable(list, s, { mine = false, compact = false } = {}) {
     const sel = S.ui('p:qm').tsel
+    // Home's narrower column: ticket + description together; tag and state live in the drawer.
+    if (compact) return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl qm-compact">
+      <thead><tr><th>Ticket</th><th>Priority</th><th>Owner</th><th>Untouched</th></tr></thead>
+      <tbody>${list.map((t) => html`<tr data-key="${t.n}" class="${cls(sel === t.n && 'sel', !t.inLatest && 'muted')}">
+        <td class="qm-tcell"><div class="row tight nowrap"><button class="btn ghost sm mono" data-click="queue.open" data-v="${t.n}">${t.n}</button>${eersPill(t)}</div>
+          <div class="small ink2 qm-tdesc" title="${t.short}">${t.short || html`<span class="muted">(no short description)</span>`}</div></td>
+        <td class="nowrap">${t.p ? html`<span class="${cls('prio', `P${t.p}`)}" title="${t.priority}">P${t.p}</span>` : t.priority}</td>
+        <td><div>${ownerCell(t)}</div>${t.inLatest && t.tag !== 'Assigned' && html`<div>${tagPill(t.tag)}</div>`}${!t.inLatest && html`<div class="small muted">Left the queue</div>`}</td>
+        <td>${t.inLatest && OPEN_TAGS.includes(t.tag) ? healthPills(t, s) : html`<span class="muted small">—</span>`}</td>
+      </tr>`)}</tbody></table></div>`
     return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl">
-      <thead><tr><th>INC</th><th>Short description</th><th>Priority</th>${!mine && html`<th>Owner</th>`}<th>Tag</th><th>Untouched</th><th>ServiceNow state</th></tr></thead>
+      <thead><tr><th>INC</th><th>Short description</th><th>Priority</th>${!mine && html`<th>Owner</th>`}<th>${mine ? 'Status' : 'Tag'}</th><th>Untouched</th><th>ServiceNow state</th></tr></thead>
       <tbody>${list.map((t) => html`<tr data-key="${t.n}" class="${cls(sel === t.n && 'sel', !t.inLatest && 'muted')}">
         <td class="nowrap"><button class="btn ghost sm mono" data-click="queue.open" data-v="${t.n}">${t.n}</button> ${eersPill(t)}</td>
         <td class="qm-clip" title="${t.short}">${t.short || html`<span class="muted">(no short description)</span>`}</td>
         <td class="nowrap">${t.priority}</td>
         ${!mine && html`<td class="nowrap">${ownerCell(t)}</td>`}
-        <td>${!t.inLatest ? html`<span class="pill" title="Not in the latest export: closed or moved to another group in ServiceNow">Left the queue</span>` : tagPill(t.tag)}</td>
+        <td class="nowrap">${mine && t.inLatest ? html`<select class="${cls('in sm tag-sel', TAG_TONE[t.tag])}" aria-label="Status of ${t.n}" data-change="queue.tagSel" data-v="${t.n}">${TAGS.map((g) => html`<option value="${g}" ${attrs({ selected: t.tag === g })}>${g === 'Resolved' ? 'Resolved…' : g}</option>`)}</select>`
+          : !t.inLatest ? html`<span class="pill" title="Not in the latest export: closed or moved to another group in ServiceNow">Left the queue</span>` : tagPill(t.tag)}${t.res && html` <span class="code-chip" title="${t.res.title}">${t.res.code}</span>`}</td>
         <td>${t.inLatest && OPEN_TAGS.includes(t.tag) ? healthPills(t, s) : html`<span class="muted small">—</span>`}</td>
         <td class="nowrap small">${t.state}</td>
       </tr>`)}</tbody></table></div>`
@@ -387,13 +519,15 @@
           <dt>Opened</dt><dd>${fmtWhen(t.opened)}</dd>
           <dt>Last updated</dt><dd>${fmtWhen(t.updated)} ${t.inLatest && healthPills(t, v.settings)}</dd>
           ${t.eers && html`<dt>EERS because</dt><dd>${t.eers}</dd>`}
+          ${t.res && html`<dt>Resolution</dt><dd><span class="code-chip">${t.res.code}</span> ${t.res.title}<div class="muted small">${t.res.category || ''}${t.res.fcr ? ' · first contact' : ''} · by ${nameOf(t.res.by)}, ${fmtWhen(t.res.at)}</div>
+            ${S.liveResolve && html`<button class="btn ghost sm" data-click="lres.copy" data-v="${t.n}">${icon('copy', 13)}Copy for ServiceNow</button>`}</dd>`}
           ${t.location && html`<dt>Location</dt><dd>${t.location}</dd>`}
           ${!t.inLatest && html`<dt>Queue</dt><dd>Not in the latest export: closed, or moved to another group in ServiceNow.</dd>`}
         </dl>
         ${canTag && html`<div class="stack" style="gap:8px">
           <span class="eyebrow">Tag</span>
-          <div class="row tight">${TAGS.map((g) => html`<button class="${cls('btn sm', t.tag === g && 'primary')}" data-click="queue.tag" data-v="${t.n}" data-t="${g}" ${attrs({ 'aria-pressed': String(t.tag === g) })}>${g}</button>`)}</div>
-          <span class="muted small">Transferred still counts as handled; reports show it separately.</span>
+          <div class="row tight">${TAGS.map((g) => html`<button class="${cls('btn sm', t.tag === g && 'primary')}" data-click="${g === 'Resolved' && S.liveResolve ? 'lres.open' : 'queue.tag'}" data-v="${t.n}" data-t="${g}" ${attrs({ 'aria-pressed': String(t.tag === g) })}>${g === 'Resolved' && S.liveResolve ? html`${icon('check', 13)}Resolve with code` : g}</button>`)}</div>
+          <span class="muted small">Resolving walks you through the resolution journey and gives the ticket a resolution code to copy into ServiceNow. Transferred still counts as handled.</span>
         </div>`}
         ${lead && html`<div class="stack" style="gap:8px">
           <span class="eyebrow">Move to someone else</span>
@@ -415,11 +549,12 @@
           ${t.history.map((h) => html`<div class="small"><b>${nameOf(h.by)}</b> ${h.what} · <span class="muted">${fmtWhen(h.at)}</span>${h.note && html`<div class="muted">${h.note}</div>`}</div>`)}</div>`}
       </div>`,
     })
+    if (S.liveResolve) S.liveResolve.modal()
   }
 
   // ---------- Team queue: load the export, see the spread ----------
   function freshness(v) {
-    if (!v.latest) return html`<div class="callout warn">${icon('upload', 16)}<span><b>No export loaded yet.</b> Export the incident list from ServiceNow as CSV and drop it below.</span></div>`
+    if (!v.latest) return html`<div class="callout warn">${icon('upload', 16)}<span><b>No export loaded yet.</b> Export the incident list from ServiceNow as CSV and drop it here.</span></div>`
     const age = Date.now() - v.latest.at
     const stale = age > Number(v.settings.uploadReminder) * 60e3
     return html`<div class="${cls('callout', stale ? 'warn' : 'accent')}">${icon(stale ? 'alert' : 'refresh', 16)}<span>
@@ -432,7 +567,8 @@
     const v = view()
     const pv = u.preview
     const canUndo = (x) => x && !v.undone.has(x.id) && (x.by === me.soeid || me.accessRole === 'Lead')
-    return html`<div class="card"><div class="card-b stack" style="gap:12px">
+    return html`<div class="stack" style="gap:12px">
+      ${freshness(v)}
       <label class="${cls('qm-drop', u.drag && 'on')}" data-dragover="queue.dragover" data-dragleave="queue.dragleave" data-drop="queue.drop">
         ${icon('upload', 20)}
         <span><b>Drop the ServiceNow incident export here</b> or <u>choose the file</u></span>
@@ -456,56 +592,97 @@
       </div>`}
       ${u.last && !pv && html`<div class="callout good">${icon('check', 16)}<span>Loaded ${u.last.rows} tickets. Handed out ${u.last.assigned} to ${u.last.pool} on shift.${u.last.left > 0 && html` <b>${u.last.left} left unassigned</b>: nobody on shift before their cutoff.`}</span>
         ${canUndo(v.imports.find((x) => x.id === u.last.importId)) && html`<span class="spacer"></span><button class="btn sm" data-click="queue.undo" data-v="${u.last.importId}">Undo this load</button>`}</div>`}
-    </div></div>`
-  }
-
-  function shiftCard(v) {
-    const now = Date.now()
-    const people = onShift(now)
-    return html`<div class="card"><div class="card-h"><b>On shift today</b><span class="muted small">From today's sign-ins · handled today = tickets that became theirs today + verified manual entries</span></div>
-      ${people.length ? html`<div class="tbl-wrap"><table class="tbl">
-        <thead><tr><th>Analyst</th><th>Role · shift</th><th class="num">Handled today</th><th class="num">Still open</th><th>Gets tickets until</th></tr></thead>
-        <tbody>${people.map((p) => { const l = loadToday(p.soeid, now, v.tickets); const open = v.tickets.filter((t) => owner(t) === p.soeid && isOpen(t)).length; return html`<tr data-key="${p.soeid}">
-          <td>${p.person.name}</td><td>${S.dutyLabel(p.duty)}${p.fromRota && html` <span class="muted small" title="From the Proci rota">(rota)</span>`}${p.edited && html` <span class="muted small" title="Changed after signing in">(changed)</span>`} · ${S.shiftLabel(p.shift)}</td>
-          <td class="num" title="${l.tickets} tickets + ${l.manual} manual">${l.total}</td><td class="num">${open}</td>
-          <td>${now < p.w.cutoff ? S.fmtTime(p.w.cutoff) : html`<span class="muted">Past cutoff</span>`}</td></tr>` })}</tbody>
-      </table></div>` : html`<div class="card-b empty">Nobody has signed in today yet. People appear here when they sign in with their role and shift.</div>`}
     </div>`
   }
 
+  // Home's top-right action: how old the data is, and the button that opens the import.
+  function importAction() {
+    const v = view()
+    const h = importHealth(v)
+    return html`<div class="row home-actions">
+      <span class="spacer"></span>
+      <span class="row tight small muted" title="${v.latest ? `Loaded by ${nameOf(v.latest.by)} at ${S.fmtTime(v.latest.at)} (${v.latest.file || 'export'})` : ''}"><span class="${cls('dot', { good: 'live', warn: 'warn', crit: 'crit' }[h.tone])}"></span>${h.age == null ? 'No export loaded yet' : `Data ${fmtAgo(h.age)} old`}</span>
+      <button class="${cls('btn', h.tone === 'good' ? '' : 'primary')}" data-click="queue.impOpen">${icon('upload', 15)}Load ServiceNow export</button>
+    </div>`
+  }
+  function importModal(me) {
+    if (!imp().open) return
+    S.modal({ title: 'Load the ServiceNow export', sub: 'Anyone can load it. The team loads a fresh one about every ' + view().settings.uploadReminder + ' minutes.', wide: true, onClose: 'queue.impClose', body: importCard(me) })
+  }
+
+  // Who is on shift right now, as a row of circles (Queue Management header). The
+  // per-person counts and balancing live on Home ("Tickets per person today").
+  function onShiftStack() {
+    if (!qm.loadedAt || !qm.roster.length || !qm.me()) return ''
+    const now = Date.now()
+    const people = onShift(now).filter((p) => now < p.w.end)
+    const shown = people.slice(0, 6)
+    const tip = (p) => `${p.person.name} · ${S.dutyLabel(p.duty)} · ${S.shiftLabel(p.shift)}${now < p.w.cutoff ? ` · gets tickets until ${S.fmtTime(p.w.cutoff)}` : ' · past cutoff'}`
+    return html`<div class="shift-stack" aria-label="${people.length} on shift now">
+      <div class="shift-avatars">${shown.map((p) => html`<span class="${cls('avatar', now >= p.w.cutoff && 'past')}" data-key="${p.soeid}" title="${tip(p)}">${S.initials(p.person.name)}<i class="dot ${now < p.w.cutoff ? 'live' : ''}"></i></span>`)}
+        ${people.length > shown.length && html`<span class="avatar more" title="${people.slice(6).map((p) => p.person.name).join(', ')}">+${people.length - shown.length}</span>`}</div>
+      <span class="small muted">${people.length ? html`<b class="num">${people.length}</b> on shift` : 'Nobody on shift yet'}</span>
+    </div>`
+  }
+
+  // ---------- Shift handover (Queue Management tab) ----------
+  // A draft from real tickets. The team's actual handover template isn't in Scope yet
+  // (vault: Team Operating Model §4), so this is a summary to copy, not the template.
+  const ho = () => S.ui('p:qm:ho', { notes: '' })
+  function handoverText() {
+    const v = view()
+    const now = Date.now()
+    const open = v.tickets.filter(isOpen)
+    const h = open.map((t) => ({ t, h: health(t, v.settings, now) }))
+    const from = startOfDay(now)
+    const r = S.rota.dayRoles(S.rota.today())
+    const done = v.tickets.filter((t) => ['Resolved', 'Transferred'].includes(t.tag) && t.tagAt >= from)
+    const onHold = v.tickets.filter((t) => t.inLatest && t.tag === 'On Hold')
+    const notes = ho().notes.trim()
+    const list = (ts) => ts.map((t) => `${t.n} ${t.priority}${t.short ? ` – ${t.short}` : ''}${owner(t) ? ` (${nameOf(owner(t))})` : ''}`).join('\n  ') || 'none'
+    return [
+      `Handover · ${new Date(now).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · Main Proci ${nameOf(r.main) || '—'}`,
+      `Open: ${open.length} (P1 ${open.filter((t) => t.p === 1).length}, P2 ${open.filter((t) => t.p === 2).length}, EERS ${open.filter((t) => t.eers).length}) · unassigned ${open.filter((t) => !owner(t) && !t.sn).length} · backlog ${h.filter((x) => x.h.backlog).length}`,
+      `Closed today in Scope: ${done.filter((t) => t.tag === 'Resolved').length} resolved, ${done.filter((t) => t.tag === 'Transferred').length} transferred`,
+      `P1/P2 still open:\n  ${list(open.filter((t) => t.p <= 2))}`,
+      `Past SLA:\n  ${list(h.filter((x) => x.h.slaBreached).map((x) => x.t))}`,
+      `On Hold (waiting on the user): ${onHold.length}`,
+      notes && `Notes: ${notes}`,
+      `Data: ServiceNow export loaded ${v.latest ? `${fmtAgo(now - v.latest.at)} ago` : 'not yet'}`,
+    ].filter(Boolean).join('\n')
+  }
+  function handover() {
+    return html`<div class="card-b stack lg" style="padding-top:16px">
+      <div class="callout warn small">${icon('info', 16)}<span><b>Draft from the live queue.</b> The team's handover template and the partner-site call aren't in Scope yet; copy this into your usual handover message.</span></div>
+      <label class="field"><span>Notes for the next shift</span><textarea class="in" rows="3" data-input="queue.hoNotes" placeholder="Callbacks owed, vendor cases, anything to watch">${ho().notes}</textarea></label>
+      <pre class="qm-pre live-ho">${handoverText()}</pre>
+      <div class="row"><span class="spacer"></span><button class="btn primary" data-click="queue.hoCopy">${icon('copy', 15)}Copy summary</button></div>
+    </div>`
+  }
+
+  // The whole team's tickets. Queue health, loading the export and the per-person
+  // spread are on Home; this is the list you work from.
   function teamQueue(me) {
     const v = view()
-    const u = S.ui('p:qm:queue', { show: 'open', q: '' })
+    const u = S.ui('p:qm:queue', { show: 'all', q: '' })
     const q = u.q.trim().toLowerCase()
     const unassigned = v.tickets.filter((t) => t.inLatest && !owner(t) && !t.sn && t.tag === 'Assigned')
     const list = v.tickets
-      .filter((t) => (u.show === 'open' ? isOpen(t) : u.show === 'unassigned' ? unassigned.includes(t) : u.show === 'gone' ? !t.inLatest : true))
+      // Everything open in the queue, narrowed by the filter.
+      .filter((t) => isOpen(t) && (u.show === 'assigned' ? t.tag === 'Assigned' : u.show === 'backlog' ? health(t, v.settings).backlog
+        : u.show === 'priority' ? t.p && t.p <= 2 : u.show === 'slo' ? health(t, v.settings).sloBreached : true))
       .filter((t) => !q || [t.n, t.short, t.group, t.sn, nameOf(owner(t))].join(' ').toLowerCase().includes(q))
       .sort((a, b) => (a.p || 9) - (b.p || 9) || (a.opened || 0) - (b.opened || 0))
-    const open = v.tickets.filter(isOpen)
-    const h = open.map((t) => health(t, v.settings))
-    return html`<div class="stack" style="gap:16px">
-      ${freshness(v)}
-      <div class="grid g-kpi">
-        ${S.kpi({ label: 'Open tickets', icon: 'alert', value: open.length, foot: `${open.filter((t) => t.eers).length} EERS` })}
-        ${S.kpi({ label: 'Unassigned', icon: 'user', tone: unassigned.length ? 'warn' : 'good', value: unassigned.length, foot: 'Waiting for someone on shift' })}
-        ${S.kpi({ label: 'Past SLO', icon: 'clock', tone: 'warn', value: h.filter((x) => x.sloBreached && !x.slaBreached).length, foot: 'Untouched longer than the SLO' })}
-        ${S.kpi({ label: 'Past SLA', icon: 'alert', tone: 'crit', value: h.filter((x) => x.slaBreached).length, foot: `${h.filter((x) => x.backlog).length} backlog` })}
-      </div>
-      ${importCard(me)}
-      ${shiftCard(v)}
-      <div class="card">
+    return html`<div>
         <div class="card-h qm-toolbar">
-          <div class="kb-search">${icon('search', 16)}<input type="search" placeholder="Search INC, description, group, owner" value="${u.q}" data-input="queue.q" aria-label="Search tickets"></div>
-          <select class="in" aria-label="Show" data-change="queue.qshow">
-            ${[['open', 'Open'], ['unassigned', 'Unassigned'], ['gone', 'Left the queue'], ['all', 'All']].map(([k, l]) => html`<option value="${k}" ${attrs({ selected: u.show === k })}>${l}</option>`)}
+          <div class="kb-search tq-search">${icon('search', 16)}<input type="search" placeholder="Search INC, description, group, owner" value="${u.q}" data-input="queue.q" aria-label="Search tickets"></div>
+          <select class="in" aria-label="Show" data-change="queue.qshow" title="All: every open ticket · Assigned: being worked (not On Hold) · Backlog: untouched since before ${v.settings.backlogHour} · Priority: P1 and P2 · SLO breach: untouched longer than the SLO">
+            ${[['all', 'All'], ['assigned', 'Assigned'], ['backlog', 'Backlog'], ['priority', 'Priority'], ['slo', 'SLO Breach']].map(([k, l]) => html`<option value="${k}" ${attrs({ selected: u.show === k })}>${l}</option>`)}
           </select>
-          <span class="spacer"></span>
           ${unassigned.length > 0 && html`<button class="btn sm primary" data-click="queue.handout">${icon('send', 14)}Hand out ${unassigned.length} now</button>`}
         </div>
-        ${list.length ? ticketTable(list, v.settings) : html`<div class="empty">${v.tickets.length ? 'Nothing matches.' : 'No tickets yet.'}</div>`}
-      </div>
-    </div>`
+        ${list.length ? ticketTable(list, v.settings, { compact: true }) : html`<div class="empty">${v.latest ? 'Nothing matches.' : 'No export loaded yet. Use Import data in the header.'}</div>`}
+      </div>`
   }
 
   // ---------- Team settings tab (Team Management) ----------
@@ -596,11 +773,8 @@
         <span class="snow-ic">${icon('upload', 15)}</span>
         <b>ServiceNow import</b>
         <span class="row tight muted snow-live"><span class="${cls('dot', dot)}"></span>${h.age == null ? 'No export yet' : `${h.label} · ${fmtAgo(h.age)} ago`}</span>
-        <span class="muted small snow-in">In:</span>
-        <span class="dash-chip">${open.length} open</span>
-        <span class="dash-chip">P1 ${p1}</span>
-        <span class="dash-chip">${unassigned} waiting</span>
       </button>
+      <button class="${cls('btn sm snow-import', h.tone === 'good' ? '' : 'primary')}" data-click="queue.goImport">${icon('upload', 14)}Import data</button>
       ${pop && html`<div class="popover popover-center" style="width:340px">
         <div class="card-h"><h3>Import health</h3><span class="spacer"></span><span class="${cls('pill', h.tone)}">${h.label}</span></div>
         <div class="card-b stack">
@@ -618,26 +792,41 @@
             ['Export time zone', v.settings.exportTz === 'local' ? "This computer's clock" : `UTC${Number(v.settings.exportTz) >= 0 ? '+' : ''}${v.settings.exportTz}`],
           ] : [['Source', 'ServiceNow incident export (CSV)'], ['Status', 'Nothing loaded yet']]).map(([k, val]) => html`<div class="row" style="justify-content:space-between;gap:12px"><span class="muted">${k}</span><b class="num" style="text-align:right">${val}</b></div>`)}
           ${h.tone !== 'good' && html`<div class="muted small">${v.latest ? 'The team loads a fresh export every ' + v.settings.uploadReminder + ' minutes; anyone can do it.' : 'Export the incident list from ServiceNow as CSV and load it.'}</div>`}
-          <div class="row" style="margin-top:6px"><button class="btn sm primary" data-click="queue.goImport">${icon('upload', 14)}Load an export</button></div>
+          <label class="${cls('qm-drop sm', imp().drag && 'on')}" style="margin-top:6px" data-dragover="queue.dragover" data-dragleave="queue.dragleave" data-drop="queue.popDrop">
+            ${icon('upload', 16)}
+            <span><b>Drop the CSV here</b> or <u>choose the file</u></span>
+            <input type="file" accept=".csv,text/csv" class="sr-only" data-change="queue.popFile">
+          </label>
+          <div class="row"><span class="spacer"></span><button class="btn sm ghost" data-click="queue.goQueue">Open Team queue</button></div>
         </div>
       </div>`}
     </div>`
   }
 
   // ---------- Exports ----------
-  S.queue = { importHealth, importPill, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
-    _test: { parseCsv, normalise, parseWhen, eersMatch, fold, shiftWindow } }
+  S.queue = { workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
+    _test: { parseCsv, normalise, parseWhen, eersMatch, fold, shiftWindow, rebalancePlan } }
+
+  // Loading the export lives on Home; the ticket list on Queue Management → Team queue.
+  function goImport() { S.pop = null; if (S.route.page !== 'home') S.nav('home'); S.set(imp(), { open: true }) }
+  function goQueue() { S.pop = null; S.nav('home'); S.set(S.ui('p:home:tabs', { tab: 'queue' }), { tab: 'queue' }) }
 
   // ---------- Handlers ----------
   const page = () => S.ui('p:qm')
   S.on({
-    'queue.show': (el) => S.set(S.ui('p:qm:mine-t'), { show: el.value }),
     'queue.qshow': (el) => S.set(S.ui('p:qm:queue'), { show: el.value }),
     'queue.q': (el) => S.set(S.ui('p:qm:queue'), { q: el.value }),
     'queue.open': (el) => S.set(page(), { tsel: el.dataset.v, tnote: '', moveTo: '' }),
     'queue.close': () => S.set(page(), { tsel: null }),
     'queue.noteText': (el) => { const p = page(); const was = !!(p.tnote || '').trim(); p.tnote = el.value; if (was !== !!el.value.trim()) S.render() },
     'queue.note': async (el) => { const p = page(); if (await qm.send({ type: 'ticketNote', n: el.dataset.v, text: (p.tnote || '').trim() })) S.set(p, { tnote: '' }) },
+    'queue.tagSel': async (el) => {
+      const n = el.dataset.v
+      const g = el.value
+      if (g === 'Resolved' && S.liveResolve) { el.value = 'Assigned'; S.liveResolve.start(n); return }
+      if (await qm.send({ type: 'ticketTag', n, tag: g })) S.dispatch({ type: 'toast', text: g === 'On Hold' ? `${n} is On Hold: it moves to the 3-Strike queue` : `${n} tagged ${g}` })
+      else S.render()
+    },
     'queue.tag': async (el) => { if (await qm.send({ type: 'ticketTag', n: el.dataset.v, tag: el.dataset.t })) S.dispatch({ type: 'toast', text: `${el.dataset.v} tagged ${el.dataset.t}` }) },
     'queue.moveTo': (el) => S.set(page(), { moveTo: el.value }),
     'queue.move': async (el) => {
@@ -657,6 +846,15 @@
     'queue.set': (el) => { const u = S.ui('p:team:settings'); u.draft = { ...u.draft, [el.dataset.k]: el.value }; S.render() },
     'queue.setReset': () => S.set(S.ui('p:team:settings'), { draft: {}, tried: false }),
     'queue.setSave': () => saveSettings(),
-    'queue.goImport': () => { S.pop = null; S.nav('qm'); S.set(page(), { tab: 'queue', sel: null, tsel: null }) },
+    'queue.goImport': () => goImport(),
+    'queue.goQueue': () => goQueue(),
+    'queue.impOpen': () => S.set(imp(), { open: true }),
+    'queue.impClose': () => S.set(imp(), { open: false, preview: null, error: null, last: null }),
+    'queue.hoNotes': (el) => { ho().notes = el.value; S.render() },
+    'queue.hoCopy': () => { const t = handoverText(); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => S.dispatch({ type: 'toast', text: 'Handover summary copied' }), () => S.dispatch({ type: 'toast', text: "Couldn't copy; select the text instead" })) },
+    // From the header popover: go Home and open the import first (navigating resets the
+    // import state), then read the file so its preview shows next to "Load and hand out".
+    'queue.popFile': (el) => { const f = el.files && el.files[0]; el.value = ''; if (f) { goImport(); readFile(f) } },
+    'queue.popDrop': (el, ev) => { ev.preventDefault(); const f = ev.dataTransfer && ev.dataTransfer.files[0]; S.set(imp(), { drag: false }); if (f) { goImport(); readFile(f) } },
   })
 })()

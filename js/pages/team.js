@@ -9,7 +9,8 @@
     const state = S.state
     const u = S.ui('p:team', () => ({ tab: route.tab || 'roster' }))
     const live = !!(S.schedule && S.schedule.real() && S.qm.me()) // real roster, rota and schedule
-    const tab = live && u.tab === 'vault' ? 'roster' : u.tab
+    // The Proci rota now lives inside Schedule & coverage (old links to 'rota' land there).
+    const tab = live && u.tab === 'vault' ? 'roster' : u.tab === 'rota' ? 'schedule' : u.tab
     const expiring = state.vault.filter((v) => v.expiresAt != null && v.expiresAt - state.now <= v.reminderDays * DAY).length
     return html`
       ${S.tabs([
@@ -18,14 +19,12 @@
         { id: 'attendance', label: 'Attendance', icon: 'clock' },
         // Hidden on real data: Scope doesn't store secrets (vault decision D7).
         ...(live ? [] : [{ id: 'vault', label: 'Password vault', icon: 'key', count: expiring || undefined }]),
-        { id: 'rota', label: 'Proci rota', icon: 'swap' },
         { id: 'settings', label: 'Team settings', icon: 'gear' },
       ], tab, 'team.tab')}
       ${tab === 'roster' && (live ? S.schedule.rosterPanel() : roster())}
       ${tab === 'schedule' && (S.schedule.real() ? S.schedule.schedulePanel() : schedule(route))}
       ${tab === 'attendance' && (S.schedule.real() ? S.schedule.attendancePanel() : attendance())}
       ${tab === 'vault' && !live && vault()}
-      ${tab === 'rota' && S.rota.rotaPanel()}
       ${tab === 'settings' && S.queue.settingsPanel()}`
   }
 

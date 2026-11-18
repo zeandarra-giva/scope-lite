@@ -514,8 +514,8 @@
       const late = open.filter((t) => S.queue.health(t, v.settings, now).slaBreached && (lead || S.queue.owner(t) === me.soeid))
       if (late.length) out.push({ id: `sla|${late.map((t) => t.n).join(',')}`, group: 'action', kind: 'sla', tone: 'crit', title: `${late.length} ${lead ? '' : 'of your '}ticket${late.length > 1 ? 's' : ''} past SLA`, sub: late.slice(0, 4).map((t) => t.n).join(', ') + (late.length > 4 ? '…' : ''), at: now - 21, page: 'home' })
       const mine = v.tickets.filter((t) => t.to === me.soeid && t.assignedAt > now - 8 * 3600e3 && S.queue.isOpen(t)).sort((a, b) => b.assignedAt - a.assignedAt)
-      if (mine.length > 3) out.push({ id: `as|${mine.map((t) => t.n).join(',')}`, group: 'update', kind: 'assign', tone: 'accent', title: `${mine.length} tickets were handed to you`, sub: mine.slice(0, 5).map((t) => t.n).join(', ') + (mine.length > 5 ? '…' : ''), at: mine[0].assignedAt, page: 'qm' })
-      else for (const t of mine) out.push({ id: `as|${t.n}|${t.assignedAt}`, group: 'update', kind: 'assign', tone: 'accent', title: `${t.n} was handed to you`, sub: t.reason, at: t.assignedAt, page: 'qm', tab: 'tickets', ticket: t.n })
+      if (mine.length > 3) out.push({ id: `as|${mine.map((t) => t.n).join(',')}`, group: 'action', kind: 'assign', tone: 'accent', title: `${mine.length} tickets were assigned to you`, sub: mine.slice(0, 5).map((t) => t.n).join(', ') + (mine.length > 5 ? '…' : ''), at: mine[0].assignedAt, page: 'qm' })
+      else for (const t of mine) out.push({ id: `as|${t.n}|${t.assignedAt}`, group: 'action', kind: 'assign', tone: 'accent', title: `${t.n} was assigned to you`, sub: t.reason, at: t.assignedAt, page: 'qm', tab: 'tickets', ticket: t.n })
     }
     if (lead) {
       const pend = (qm.entries || []).filter((x) => x.status === 'Pending' && x.by !== me.soeid)

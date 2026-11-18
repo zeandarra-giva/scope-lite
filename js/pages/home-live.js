@@ -46,6 +46,7 @@
     const shift = new Map(m.shift.map((p) => [p.soeid, p]))
     const people = S.qm.roster.filter((p) => p.active !== false)
     const from = new Date(m.now).setHours(0, 0, 0, 0)
+    const inPool = new Set(Q().scheduledToday(m.now).map((x) => x.soeid))
     const rows = people.map((p) => {
       const sp = shift.get(p.soeid)
       const pl = S.schedule.planFor(p.soeid, today)
@@ -56,8 +57,10 @@
       const given = mine.filter((t) => (t.to ? t.assignedAt : t.firstSeen) >= from)
       const done = given.filter((t) => !Q().isOpen(t)).length
       const open = mine.filter(Q().isOpen).length
-      const status = sp ? (m.now < sp.w.cutoff ? ['good', `Until ${S.fmtTime(sp.w.cutoff)}`, true] : ['plain', 'Past cutoff', false])
-        : pl.role === 'LEAVE' ? ['plain', 'On leave', false] : pl.ready ? ['warn', 'Not signed in', false] : ['plain', 'Off today', false]
+      // Who shares tickets: everyone scheduled today, signed in or not (lead, 2026-11-19).
+      const sched = inPool.has(p.soeid)
+      const status = sched ? (sp ? ['good', 'Signed in', true] : ['plain', 'Scheduled · not signed in yet', true])
+        : pl.role === 'LEAVE' ? ['plain', 'On leave', false] : pl.role === 'REST' ? ['plain', 'Rest day', false] : ['plain', 'Off today', false]
       return { p, sp, pl, l, assigned: given.length, done, open, status, inPool: status[2] }
     }).filter((r) => r.sp || r.pl.ready || r.open || r.l.total)
       .sort((a, b) => b.inPool - a.inPool || b.l.total - a.l.total || a.p.name.localeCompare(b.p.name))
@@ -74,13 +77,13 @@
         <span class="spacer"></span>
         ${S.infoTip('live-fair', 'Equal distribution', html`
           <span>Each row shows <b>done / assigned</b> today. <b>Assigned</b>: tickets that became theirs today. <b>Done</b>: those that are tagged Resolved or Transferred, or have left the ServiceNow export. Faded rows aren't getting tickets right now (hover a name to see why).</span>
-          <span>Every new ticket goes to whoever has <b>the fewest tickets today</b> (assigned + verified manual entries), among people signed in and before their cutoff. Ties go to whoever got one least recently.</span>
-          <span>${auto ? html`<b>Automatic:</b> new tickets are handed out as soon as they load and someone is on shift, so nobody presses a button.` : html`Automatic hand-out is <b>off</b> in Team settings, so use Rebalance or Hand out.`}</span>
-          <span><b>EERS</b> tickets go to today's Proci Backup. Tickets already assigned in ServiceNow count for that person and are never moved.</span>
-          <span><b>Rebalance</b> (leads) hands out anything waiting, moves untouched tickets (tag Assigned) off people past their cutoff, signed out or on leave, then evens out today's counts until the spread is 1 or less. Every move records its reason.</span>`)}
+          <span>Tickets are shared equally among <b>everyone scheduled to work today</b> in Team Management (a shift set, not on leave, not a rest day), whether or not they have signed in yet. Each new ticket goes to whoever has <b>the fewest tickets today</b> (assigned + verified manual entries). Ties go to whoever got one least recently.</span>
+          <span>${auto ? html`<b>Automatic:</b> new tickets are handed out as soon as they load, so nobody presses a button.` : html`Automatic hand-out is <b>off</b> in Team settings, so use Rebalance or Hand out.`}</span>
+          <span><b>EERS</b> tickets go to today's Proci Backup. Tickets ServiceNow already assigned to an active team member count for that person and are never moved.</span>
+          <span><b>Rebalance</b> (leads) hands out anything waiting, moves untouched tickets (tag Assigned) off people who aren't working today (leave, rest day), then evens out today's counts until the spread is 1 or less. Every move records its reason.</span>`)}
       </div>
       <div class="card-b stack" style="gap:10px">
-        ${m.unassigned > 0 && html`<div class="callout warn small">${icon('user', 16)}<span><b>${m.unassigned} waiting.</b> ${pool.length ? (auto ? 'Handing them out…' : 'Rebalance or Hand out to share them.') : 'Nobody is on shift before their cutoff yet; they go out automatically when someone signs in.'}</span></div>`}
+        ${m.unassigned > 0 && html`<div class="callout warn small">${icon('user', 16)}<span><b>${m.unassigned} waiting.</b> ${pool.length ? (auto ? 'Handing them out…' : 'Rebalance or Hand out to share them.') : Q().waitingReason(m.v, m.now)}</span></div>`}
         ${rows.length ? rows.map((r) => html`<div class="dist-row" style="opacity:${r.inPool ? 1 : 0.55}" data-key="${r.p.soeid}">
             <span class="avatar sm">${S.initials(r.p.name)}</span>
             <span class="small dist-name" title="${r.p.name} · ${r.status[1]} · ${r.open} still open on them${r.l.manual ? ` · +${r.l.manual} verified manual` : ''}">${r.p.name}${r.sp && r.sp.duty !== 'ANALYST' ? html` <span class="muted">· ${S.dutyLabel(r.sp.duty)}</span>` : ''}</span>
@@ -177,7 +180,7 @@
             </div>
           </div>`)}
         ${S.kpi({ label: 'Waiting for someone', icon: 'user', tone: m.unassigned ? 'warn' : 'good', value: m.unassigned,
-          info: html`<span>Open tickets nobody owns yet. Scope hands a ticket out by itself only to someone who has <b>started a shift today</b> (signed in, with a shift in Team Management) and is <b>before their cutoff</b> (${m.v.settings.cutoffMinutes} min before their shift ends). Tickets already assigned in ServiceNow are left alone.</span>`,
+          info: html`<span>Open tickets nobody on the team owns yet. Scope shares them out by itself among everyone <b>scheduled to work today</b> in Team Management, signed in or not. Tickets ServiceNow already assigned to an active team member stay with them.</span>`,
           foot: m.unassigned ? Q().waitingReason(m.v, m.now) : 'Every open ticket has an owner' })}
         ${S.kpi({ label: 'On shift now', icon: 'team', tone: 'navy', value: m.nowOn, unit: `/ ${m.scheduled} scheduled`,
           info: html`<span>Signed in today and before the end of their shift. Scheduled comes from Team Management (rota and shifts).</span>`,

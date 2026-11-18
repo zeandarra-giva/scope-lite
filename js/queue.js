@@ -2,18 +2,20 @@
 //
 // Replaces the team's QueueManager tool (vault: QueueManager Mechanics, D13–D18):
 //  - Team settings: SLA/SLO targets, shift times, EERS keywords. Lead edits, everyone follows.
-//  - Who's on shift: each roster sign-in records today's role and shift (shiftStart).
+//  - Sign-in records today's role and shift (shiftStart) for attendance; it doesn't decide
+//    who gets tickets.
 //  - Import: drop the ServiceNow CSV. Rows are deduped by INC number; a row only
 //    replaces what we have when its sys_updated_on is newer. The description is
 //    read once for the EERS keywords and never stored (it's full of personal data).
 //  - Assignment: the moment tickets load, EERS tickets go to today's Proci Backup and
-//    the rest to whoever has handled the fewest tickets today, among the people on
-//    shift and before their cutoff. Every assignment carries its reason. Tickets
-//    already assigned in ServiceNow are skipped and count for that person.
-//    With "Hand out automatically" on (Team settings), any signed-in browser hands out
-//    new unassigned tickets as soon as someone is on shift, so nobody has to press a button.
+//    the rest to whoever has handled the fewest tickets today, among everyone scheduled
+//    to work today (lead, 2026-11-19; signed in or not). Every assignment carries its
+//    reason. Tickets ServiceNow already assigned to an active team member are skipped
+//    and count for that person; anyone else's are shared out.
+//    With "Hand out automatically" on (Team settings), any open browser hands out new
+//    unassigned tickets as soon as they load, so nobody has to press a button.
 //  - Rebalance (lead): moves still-untouched tickets so today's handled counts are even,
-//    and moves tickets off people who are past their cutoff, signed out or on leave.
+//    and moves tickets off people who aren't working today (leave, rest day).
 //  - My tickets: a working view. The owner tags each ticket (Assigned / On Hold /
 //    Transferred / Resolved) and adds notes. Transferred counts as handled (D17).
 //
@@ -45,7 +47,7 @@
     { key: 'minLate', group: 'Shifts', label: 'At least on Late', unit: 'people, each weekday', type: 'num', def: 1 },
     { key: 'cutoffMinutes', group: 'Shifts', label: 'Stop handing out tickets', unit: 'minutes before the shift ends', type: 'num', def: 30 },
     { key: 'eersKeywords', group: 'Assignment', label: 'EERS keywords', unit: 'whole words, comma-separated, in the short description or description', type: 'text', def: 'EERS, entitlement, entitlements' },
-    { key: 'autoHandout', group: 'Assignment', label: 'Hand out new tickets automatically', unit: 'as soon as someone is on shift', type: 'bool', def: true },
+    { key: 'autoHandout', group: 'Assignment', label: 'Hand out new tickets automatically', unit: 'as soon as they load, to everyone scheduled today', type: 'bool', def: true },
     { key: 'pool.mainProci', group: 'Assignment', label: 'Main Proci gets regular tickets', type: 'bool', def: true },
     { key: 'pool.backup', group: 'Assignment', label: 'Proci Backup gets regular tickets too', type: 'bool', def: true },
     { key: 'uploadReminder', group: 'Data', label: 'Remind to load a new export after', unit: 'minutes', type: 'num', def: 45 },
@@ -181,7 +183,9 @@
   function owner(t) {
     if (t.to) return t.to
     if (!t.sn) return null
-    const p = qm.roster.find((x) => norm(x.name) === norm(t.sn))
+    // Only an active team member keeps a ticket ServiceNow assigned to them (D20). Anyone
+    // inactive or not on the roster: the ticket is shared out like an unassigned one.
+    const p = qm.roster.find((x) => x.active !== false && norm(x.name) === norm(t.sn))
     return p ? p.soeid : null
   }
   const minutes = (hhmm) => { const [h, m] = String(hhmm || '').split(':').map(Number); return (h || 0) * 60 + (m || 0) }
@@ -207,6 +211,21 @@
       .filter((p) => p.person && p.person.active !== false && p.duty !== 'LEAVE')
       .sort((a, b) => a.person.name.localeCompare(b.person.name))
   }
+  // Who shares today's tickets (lead, 2026-11-19): everyone SCHEDULED to work today in Team
+  // Management (a shift, not on leave, not a rest day), whether or not they have signed in yet.
+  // Signing in doesn't decide it, so the first person in doesn't get the whole backlog.
+  // Role: a change made after signing in (with a reason) wins; otherwise the rota's.
+  function scheduledToday(now = Date.now()) {
+    if (!S.schedule) return []
+    const day = dayOf(now)
+    const signed = new Map([...view().presence.values()].filter((p) => p.day === day).map((p) => [p.soeid, p]))
+    return qm.roster.filter((p) => p.active !== false).map((person) => {
+      const pl = S.schedule.planFor(person.soeid, day)
+      const pr = signed.get(person.soeid)
+      const duty = pr && pr.edited ? pr.duty : pl.role || 'ANALYST'
+      return { soeid: person.soeid, person, duty, shift: pl.shift, w: { cutoff: Infinity }, ok: pl.shift && pl.shift !== 'OFF' && pl.role !== 'LEAVE' && pl.role !== 'REST' && duty !== 'LEAVE' }
+    }).filter((p) => p.ok).sort((a, b) => a.person.name.localeCompare(b.person.name))
+  }
   const startOfDay = (now) => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() }
   // Handled today = tickets that became theirs today (any tag, Transferred included)
   // plus verified manual entries handled today (D12).
@@ -229,7 +248,7 @@
   const isOpen = (t) => t.inLatest && OPEN_TAGS.includes(t.tag)
 
   // ---------- Automatic assignment (D15) ----------
-  // Pure: given the folded tickets, who's on shift and the settings, decide who gets what.
+  // Pure: given the folded tickets, who's scheduled today and the settings, decide who gets what.
   function plan({ tickets, people, settings, now, load }) {
     const pool = people.filter((p) => now < p.w.cutoff)
     const counts = new Map(pool.map((p) => [p.soeid, load(p.soeid)]))
@@ -256,7 +275,7 @@
         if (who) why = `${t.eers ? `EERS (${t.eers}), but no Proci Backup on shift. ` : ''}Fewest handled today (${counts.get(who.soeid)}) of ${list.length} on shift`
       }
       if (!who) { left.push(t); continue }
-      if (t.sn) why += `. In ServiceNow it was with ${t.sn}, who isn't on the team: reassign it there`
+      if (t.sn) why += '. In ServiceNow it was assigned to someone not on the active team: reassign it there'
       out.push({ n: t.n, to: who.soeid, reason: why })
       counts.set(who.soeid, counts.get(who.soeid) + 1)
       last.set(who.soeid, ++i)
@@ -266,7 +285,7 @@
   async function handOut(importId) {
     const now = Date.now()
     const v = view()
-    const p = plan({ tickets: v.tickets, people: onShift(now), settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total })
+    const p = plan({ tickets: v.tickets, people: scheduledToday(now), settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total })
     if (!p.list.length) return p
     for (let k = 0; k < p.list.length; k += 300) {
       if (!(await qm.send({ type: 'ticketsAssigned', importId: importId || null, list: p.list.slice(k, k + 300) }))) break
@@ -315,7 +334,7 @@
   }
   function rebalancePreview(now = Date.now()) {
     const v = view()
-    return rebalancePlan({ tickets: v.tickets, people: onShift(now), now, load: (s) => loadToday(s, now, v.tickets).total })
+    return rebalancePlan({ tickets: v.tickets, people: scheduledToday(now), now, load: (s) => loadToday(s, now, v.tickets).total })
   }
   async function rebalance() {
     const handed = await handOut(null)
@@ -329,20 +348,10 @@
     const waiting = v.tickets.filter((t) => isOpen(t) && !owner(t))
     if (!waiting.length) return null
     if (v.settings.autoHandout === false || v.settings.autoHandout === 'false') return 'Automatic hand-out is off in Team settings. Use Hand out in Team queue.'
-    const on = onShift(now)
-    if (!on.length) return "Nobody has started a shift today. Tickets go out by themselves as soon as someone on today's schedule signs in (or uses Start today's shift)."
-    const before = on.filter((p) => now < p.w.cutoff)
-    if (!before.length) return `Everyone on shift is past their cutoff (${S.fmtTime(Math.max(...on.map((p) => p.w.cutoff)))}), so nobody gets new tickets until the next shift starts.`
-    if (!plan({ tickets: v.tickets, people: on, settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return 'Nobody on shift takes these tickets right now: check "Main Proci gets regular tickets" and "Proci Backup gets regular tickets too" in Team settings.'
+    const on = scheduledToday(now)
+    if (!on.length) return 'Nobody is scheduled to work today. Set shifts in Team Management → Schedule & coverage.'
+    if (!plan({ tickets: v.tickets, people: on, settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return 'Nobody scheduled today takes these tickets: check "Main Proci gets regular tickets" and "Proci Backup gets regular tickets too" in Team settings.'
     return 'Handing them out now…'
-  }
-  // Tickets ServiceNow assigned to a name that isn't on the roster and Scope hasn't shared out
-  // yet. They go into the equal distribution; a spelling difference in roster.json would also
-  // land a team member's tickets here, so the import preview names them.
-  function unmatched(v = view()) {
-    const m = new Map()
-    for (const t of v.tickets) if (isOpen(t) && t.sn && !owner(t)) m.set(t.sn, (m.get(t.sn) || 0) + 1)
-    return [...m].sort((a, b) => b[1] - a[1])
   }
 
   // ---------- Automatic hand-out ----------
@@ -356,9 +365,48 @@
     if (v.settings.autoHandout === false || v.settings.autoHandout === 'false') return
     if (!v.tickets.some((t) => t.inLatest && !t.to && !owner(t) && t.tag === 'Assigned')) return
     const now = Date.now()
-    if (!plan({ tickets: v.tickets, people: onShift(now), settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return
+    if (!plan({ tickets: v.tickets, people: scheduledToday(now), settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return
     autoBusy = true; autoLast = now
     handOut(null).then((p) => { if (p.list.length) S.dispatch({ type: 'toast', text: `Handed out ${p.list.length} new ticket${p.list.length > 1 ? 's' : ''} automatically` }) }).finally(() => { autoBusy = false })
+  })
+
+  // ---------- "Assigned to you": toast + sound ----------
+  // When a ticket becomes mine (automatic hand-out, a rebalance or someone moving it to me),
+  // this browser shows a toast and plays a short chime; the bell lists it under Needs action.
+  // What was already mine when the page opened doesn't ring. The chime is a Web Audio tone
+  // (no sound file); browsers only allow it after the first click on the page. Each person
+  // can turn it off in the profile menu (kept in this browser).
+  const SOUND_KEY = 'scope-lite-sound'
+  const soundOn = () => S.storage ? S.storage.get(SOUND_KEY) !== 'off' : true
+  let actx = null
+  function chime() {
+    if (!soundOn()) return
+    try {
+      actx = actx || new (window.AudioContext || window.webkitAudioContext)()
+      if (actx.state === 'suspended') actx.resume()
+      const t0 = actx.currentTime
+      ;[[880, 0], [1320, 0.14]].forEach(([f, d]) => {
+        const o = actx.createOscillator(); const g = actx.createGain()
+        o.type = 'sine'; o.frequency.value = f
+        g.gain.setValueAtTime(0.0001, t0 + d); g.gain.exponentialRampToValueAtTime(0.25, t0 + d + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + d + 0.35)
+        o.connect(g).connect(actx.destination); o.start(t0 + d); o.stop(t0 + d + 0.4)
+      })
+    } catch { /* audio blocked or unavailable: the toast and bell still show it */ }
+  }
+  // Unlock audio on the first click, so a later assignment can ring.
+  window.addEventListener('pointerdown', () => { try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); if (actx.state === 'suspended') actx.resume() } catch {} }, { once: true })
+  let mineSeen = null; let mineFor = null
+  S.after(() => {
+    const me = qm.me()
+    if (!me || !qm.loadedAt) return
+    const keys = view().tickets.filter((t) => t.to === me.soeid && isOpen(t)).map((t) => `${t.n}|${t.assignedAt}`)
+    if (mineFor !== me.soeid || !mineSeen) { mineSeen = new Set(keys); mineFor = me.soeid; return }
+    const fresh = keys.filter((k) => !mineSeen.has(k))
+    if (!fresh.length) return
+    fresh.forEach((k) => mineSeen.add(k))
+    const ns = fresh.map((k) => k.split('|')[0])
+    chime()
+    S.dispatch({ type: 'toast', text: ns.length === 1 ? `${ns[0]} was assigned to you` : `${ns.length} tickets were assigned to you` })
   })
 
   // ---------- CSV import ----------
@@ -450,7 +498,7 @@
     const newer = out.rows.filter((r) => known.has(r.n) && r.updated > (known.get(r.n).updated || 0))
     const inFile = new Set(out.rows.map((r) => r.n))
     const gone = view().tickets.filter((t) => t.inLatest && !inFile.has(t.n))
-    S.set(u, { busy: false, preview: { file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn && qm.roster.some((p) => norm(p.name) === norm(r.sn))).length, offRoster: [...new Set(out.rows.filter((r) => r.sn && !qm.roster.some((p) => norm(p.name) === norm(r.sn))).map((r) => r.sn))] } })
+    S.set(u, { busy: false, preview: { file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn && qm.roster.some((p) => p.active !== false && norm(p.name) === norm(r.sn))).length, offTeam: out.rows.filter((r) => r.sn && !qm.roster.some((p) => p.active !== false && norm(p.name) === norm(r.sn))).length } })
   }
   async function confirmImport() {
     const u = imp()
@@ -502,7 +550,7 @@
   const ownerCell = (t) => {
     const o = owner(t)
     if (o) return html`${nameOf(o)}${!t.to && html` <span class="muted small" title="Assigned in ServiceNow">(ServiceNow)</span>`}`
-    if (t.sn) return html`<span class="pill warn" title="In ServiceNow: ${t.sn} (not on the team). Scope shares it out like an unassigned ticket.">Unassigned</span>`
+    if (t.sn) return html`<span class="pill warn" title="Assigned in ServiceNow to someone not on the active team. Scope shares it out like an unassigned ticket.">Unassigned</span>`
     return html`<span class="pill warn">Unassigned</span>`
   }
 
@@ -592,7 +640,7 @@
           <dt>Owner</dt><dd>${ownerCell(t)}</dd>
           ${t.reason && html`<dt>Why them</dt><dd>${t.reason}<div class="muted small">${fmtWhen(t.assignedAt)}</div></dd>`}
           <dt>Priority</dt><dd>${t.priority}</dd>
-          <dt>ServiceNow</dt><dd>${t.state} · ${t.group}${t.sn && html` · assigned to ${t.sn}`}</dd>
+          <dt>ServiceNow</dt><dd>${t.state} · ${t.group}${t.sn && (owner(t) && !t.to ? html` · assigned to ${t.sn}` : html` · assigned to someone not on the active team`)}</dd>
           <dt>Opened</dt><dd>${fmtWhen(t.opened)}</dd>
           <dt>Last updated</dt><dd>${fmtWhen(t.updated)} ${t.inLatest && healthPills(t, v.settings)}</dd>
           ${t.eers && html`<dt>EERS because</dt><dd>${t.eers}</dd>`}
@@ -663,7 +711,7 @@
           ${S.kpi({ label: 'Left the queue', icon: 'swap', tone: 'warn', value: pv.gone, foot: 'Open before, not in this file' })}
         </div>
         <div class="muted small">${pv.same} unchanged · ${pv.snAssigned} already assigned in ServiceNow (skipped, counted for that person)${pv.dupes > 0 && ` · ${pv.dupes} repeated rows merged`}</div>
-        ${pv.offRoster && pv.offRoster.length > 0 && html`<div class="callout warn small">${icon('alert', 15)}<span><b>Assigned in ServiceNow to people not on the team:</b> ${pv.offRoster.join(', ')}. Scope shares their tickets out equally, like unassigned ones. If one of them <i>is</i> on the team, make their name in <code>data\roster.json</code> match ServiceNow exactly, or their tickets will go to others.</span></div>`}
+        ${pv.offTeam > 0 && html`<div class="callout small">${icon('info', 15)}<span><b>${pv.offTeam} assigned in ServiceNow to people not on the active team.</b> Scope shares them out equally like unassigned tickets. If one belongs to a current team member, check their name in <code>data\roster.json</code> is spelled exactly as in ServiceNow.</span></div>`}
         ${pv.skipped.length > 0 && html`<details class="small"><summary>${pv.skipped.length} rows skipped</summary><ul>${pv.skipped.slice(0, 20).map((x) => html`<li>Line ${x.line}: ${x.why}</li>`)}</ul></details>`}
         <div class="row"><span class="spacer"></span><button class="btn ghost" data-click="queue.cancel">Cancel</button>
           <button class="btn primary" data-click="queue.confirm" ${attrs({ disabled: u.busy || !pv.rows.length })}>${icon('check', 15)}Load and hand out</button></div>
@@ -884,7 +932,7 @@
   }
 
   // ---------- Exports ----------
-  S.queue = { waitingReason, unmatched, snowHref, incLink, detailsBtn, parseCsv, readText, workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
+  S.queue = { soundOn, chime, SOUND_KEY, scheduledToday, waitingReason, snowHref, incLink, detailsBtn, parseCsv, readText, workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
     _test: { parseCsv, normalise, parseWhen, eersMatch, fold, shiftWindow, rebalancePlan } }
 
   // Loading the export lives on Home; the ticket list on Queue Management → Team queue.

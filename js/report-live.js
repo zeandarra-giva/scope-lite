@@ -128,7 +128,7 @@
       const handled = p.resolved + p.transferred + p.manual + p.histDone
       const credit = p.received + p.manual
       return { ...p, handled, credit, perDay: p.worked ? credit / p.worked : null }
-    }).filter((p) => p.onRoster) // only people on the roster (lead, 2026-11-19)
+    }).filter((p) => p.onRoster && (qm().roster.find((x) => x.soeid === p.soeid) || {}).active !== false) // only the active team (lead, 2026-11-19)
       .sort((a, b) => b.credit - a.credit || a.name.localeCompare(b.name))
     const total = [...perDay.values()].reduce((a, b) => a + b, 0)
     const activeDays = [...perDay.values()].filter((n) => n > 0).length
@@ -206,7 +206,7 @@
           <label class="btn sm"><input type="file" accept=".csv" multiple hidden data-change="mr.eodFiles">${icon('upload', 14)}Choose the 3 CSV files</label>
           <div class="row tight small">${['eod', 'sessions', 'members'].map((k) => html`<span class="${cls('pill', u.files[k] ? 'good' : '')}">${{ eod: 'tbl_EODReports', sessions: 'tbl_DaySessions', members: 'tbl_Members' }[k]}${u.files[k] ? ` · ${u.files[k].rows.length} rows` : ''}</span>`)}</div>
           ${u.error && html`<div class="callout warn small">${icon('alert', 15)}<span>${u.error}</span></div>`}
-          ${u.preview && html`<div class="callout small">${icon('info', 15)}<span><b>${u.preview.rows.length} person-days</b> from ${u.preview.from} to ${u.preview.to}, ${u.preview.people} people${u.preview.unmatched.length ? `. Left out, not on the roster: ${u.preview.unmatched.join(', ')}` : ''}${u.preview.skipped ? `. ${u.preview.skipped} rows skipped (no session date)` : ''}.</span>
+          ${u.preview && html`<div class="callout small">${icon('info', 15)}<span><b>${u.preview.rows.length} person-days</b> from ${u.preview.from} to ${u.preview.to}, ${u.preview.people} people${u.preview.unmatched.length ? `. ${u.preview.unmatched.length} ${u.preview.unmatched.length > 1 ? 'people' : 'person'} not on the active team left out` : ''}${u.preview.skipped ? `. ${u.preview.skipped} rows skipped (no session date)` : ''}.</span>
             <span class="spacer"></span><button class="btn primary sm" data-click="mr.eodImport">Import</button><button class="btn ghost sm" data-click="mr.eodCancel">Cancel</button></div>`}
           ${h.imports.length > 0 && html`<div class="small muted">${h.imports.map((x) => html`<div class="row tight">Imported ${new Date(x.at).toLocaleString()} by ${Q().nameOf(x.by)} · ${x.rows.length} rows <button class="btn ghost sm" data-click="mr.eodUndo" data-v="${x.id}">Undo</button></div>`)}</div>`}`
         : html`<span class="small muted">A lead imports it.</span>`}
@@ -248,7 +248,7 @@
     const who = new Map(members.rows.map((r) => {
       const soeid = mSoeid >= 0 ? String(r[mSoeid]).trim().toUpperCase() : ''
       const name = mName >= 0 ? String(r[mName]).trim() : ''
-      const p = roster.find((x) => (soeid && x.soeid.toUpperCase() === soeid) || (name && norm(x.name) === norm(name)))
+      const p = roster.find((x) => x.active !== false && ((soeid && x.soeid.toUpperCase() === soeid) || (name && norm(x.name) === norm(name))))
       return [String(r[mId]).trim(), { soeid: p ? p.soeid : null, name: p ? p.name : name || soeid || `Member ${r[mId]}` }]
     }))
     const h = eod.head

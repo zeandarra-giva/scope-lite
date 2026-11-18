@@ -273,6 +273,7 @@
           </div>
         </div>
         ${real && html`<button role="menuitem" class="menu-item" data-click="sched.editOpen">${icon('edit', 16)}${today ? "Change today's role or shift" : "Start today's shift"}</button>`}
+        ${real && S.queue && html`<button role="menuitemcheckbox" aria-checked="${S.queue.soundOn()}" class="menu-item" data-click="app.sound">${icon('bell', 16)}Sound for new tickets<span class="spacer"></span><span class="muted small">${S.queue.soundOn() ? 'On' : 'Off'}</span></button>`}
         <button role="menuitem" class="menu-item" data-click="app.profile" data-v="settings">${icon('user', 16)}Account profile</button>
         <button role="menuitem" class="menu-item danger" data-click="app.profile" data-v="logout">${icon('logout', 16)}Log out</button>
       </div>`}
@@ -475,6 +476,7 @@
       S.dispatch({ type: 'read', id: n.id })
       S.nav(n.page, { tab: n.tab, ticket: n.ticket, approval: n.approval })
     },
+    'app.sound': () => { const on = !S.queue.soundOn(); storage.set(S.queue.SOUND_KEY, on ? null : 'off'); if (on) S.queue.chime(); S.render() },
     'app.profile': (el) => {
       S.pop = null
       const v = el.dataset.v

@@ -38,7 +38,9 @@ for (const f of ['data/roster.json', 'data/roster.example.json']) {
     if (names.length) { TEAM = names; break }
   } catch {}
 }
-const OUTSIDE = ['Zoltan Kerekes', 'Ildiko Balogh', 'Marek Nowicki'] // partner-site / other-team names
+// Made-up names for people outside the team (no real names in the repo). Their tickets are
+// shared out like unassigned ones.
+const OUTSIDE = ['Partner Analyst A', 'Partner Analyst B', 'Partner Analyst C']
 
 const G1 = 'SC GLBL IAM OPS SUPPORT'
 const G2 = 'SC GLBL 1T SECOPS TRIAGE AND DISPATCH SUPPORT'

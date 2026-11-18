@@ -128,7 +128,9 @@
       await load()
       return true
     } catch (err) {
-      S.dispatch({ type: 'toast', text: `Couldn't save: ${err.message}` })
+      // "Failed to fetch" means the browser couldn't reach the server at all.
+      const why = /failed to fetch|networkerror|load failed/i.test(err.message) ? "Scope's server isn't answering. Check that its window (run.bat or share.bat) is still open, then try again." : err.message
+      S.dispatch({ type: 'toast', tone: 'crit', text: `Couldn't save. ${why}` })
       return false
     }
   }
@@ -223,7 +225,7 @@
     return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl">
       <thead><tr><th>INC</th><th>Handled</th>${who && html`<th>Analyst</th>`}<th>Reason</th><th>Status</th></tr></thead>
       <tbody>${list.map((x) => html`<tr data-key="${x.id}" class="${cls(page().sel === x.id && 'sel')}">
-        <td><button class="btn ghost sm mono" data-click="qm.select" data-v="${x.id}">${x.inc}</button></td>
+        <td><span class="row tight" style="flex-wrap:nowrap">${S.queue.incLink(x.inc, null, { open: 'qm.select', v: x.id })}${S.queue.detailsBtn(x.inc, null, { open: 'qm.select', v: x.id })}</span></td>
         <td class="nowrap">${fmtWhen(x.handledAt)}</td>
         ${who && html`<td>${nameOf(x.by)}</td>`}
         <td class="qm-clip" title="${x.reason}">${x.reason}</td>
@@ -297,7 +299,7 @@
     S.drawer({
       className: 'qm-drawer',
       onClose: 'qm.deselect',
-      title: html`<span class="row tight">${statusPill(x.status)}</span><h2 class="drawer-title mono">${x.inc}</h2>`,
+      title: html`<span class="row tight">${statusPill(x.status)}</span><h2 class="drawer-title mono">${S.queue.snowHref(x.inc) ? html`<a class="inc-link" href="${S.queue.snowHref(x.inc)}" target="_blank" rel="noopener noreferrer" title="Open ${x.inc} in ServiceNow">${x.inc}${icon('external', 16)}</a>` : x.inc}</h2>`,
       sub: html`<span class="muted small">${nameOf(x.by)} · handled ${fmtWhen(x.handledAt)}</span>`,
       body: html`<div class="stack" style="gap:16px">
         <dl class="qm-dl">

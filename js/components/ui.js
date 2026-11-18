@@ -175,7 +175,7 @@ const FILLED = {
   const prio = (p) => html`<span class="prio ${p}">${p}</span>`
 
   function toasts() {
-    return html`<div class="toasts" aria-live="polite">${S.state.toasts.map((t) => html`<div class="toast" data-key="t${t.id}">${icon('check', 16)}${t.text}</div>`)}</div>`
+    return html`<div class="toasts" aria-live="polite">${S.state.toasts.map((t) => html`<div class="${cls('toast', t.tone === 'crit' && 'toast-crit')}" data-key="t${t.id}" ${attrs({ role: t.tone === 'crit' ? 'alert' : null })}>${icon(t.tone === 'crit' ? 'alert' : 'check', 16)}${t.text}</div>`)}</div>`
   }
 
   function ring(value, tone = 'good', label = '') {

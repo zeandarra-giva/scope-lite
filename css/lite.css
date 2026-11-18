@@ -314,3 +314,32 @@ button.sc-cell:focus-visible { outline: 2px solid var(--accent); outline-offset:
 .team-body { flex: 1; min-height: 0; overflow: auto; }
 .team-body .tbl-scroll { max-height: none; overflow: visible; }
 @media (max-width: 1100px) { .team-col { height: 640px; } }
+
+/* INC number as a link to ServiceNow (Team settings → ServiceNow address) */
+.inc-link { display: inline-flex; align-items: center; gap: 4px; color: var(--accent); text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--accent) 35%, transparent); text-underline-offset: 3px; font-weight: 500; padding: 4px 2px; border-radius: 4px; }
+.inc-link:hover { text-decoration-color: currentColor; }
+.inc-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inc-link svg { opacity: .7; flex: none; }
+.link-plain { display: block; width: 100%; background: none; border: 0; text-align: left; cursor: pointer; font: inherit; color: inherit; }
+.link-plain:hover { color: var(--ink); text-decoration: underline; }
+.inc-details { padding: 0 6px; min-width: 0; }
+.toast.toast-crit { background: var(--crit); color: #fff; }
+
+/* Schedule grid: click a day, pick from a menu (replaces the one-click brushes) */
+.sc-help { display: flex; flex-direction: column; gap: 6px; }
+.sc-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; align-items: center; }
+.sc-legend > span { display: inline-flex; align-items: center; gap: 4px; }
+.sc-chip.sm { height: 20px; padding: 0 7px; font-size: 11px; }
+.sc-role { display: inline-flex; align-items: center; gap: 3px; height: 20px; padding: 0 7px; border-radius: 999px; font: 600 11px var(--f-ui); color: var(--ink-2); box-shadow: inset 0 0 0 1px var(--line-strong); white-space: nowrap; }
+button.sc-cell { position: relative; cursor: pointer; border: 1.5px solid transparent; }
+button.sc-cell:hover, button.sc-cell.open { background: var(--hover); border-color: var(--accent); border-style: solid; }
+.sc-edit { position: absolute; top: 6px; right: 6px; color: var(--muted); opacity: 0; }
+button.sc-cell:hover .sc-edit, button.sc-cell.open .sc-edit, button.sc-cell:focus-visible .sc-edit { opacity: 1; }
+.sc-menu { position: fixed; z-index: 60; display: flex; flex-direction: column; padding: 6px; border-radius: 12px; background: var(--bg); box-shadow: 0 12px 32px rgba(0,0,0,.18), 0 0 0 1px var(--line); }
+.sc-mh { display: flex; flex-direction: column; padding: 6px 8px 8px; border-bottom: 1px solid var(--line); margin-bottom: 4px; }
+.sc-msec { padding: 8px 8px 2px; }
+.sc-mnote { padding: 4px 8px; }
+.sc-mi { display: flex; align-items: center; gap: 8px; width: 100%; padding: 8px; border: 0; border-radius: 8px; background: none; color: var(--ink); font: 500 13.5px var(--f-ui); text-align: left; cursor: pointer; }
+.sc-mi:hover, .sc-mi:focus-visible { background: var(--hover); outline: none; }
+.sc-mi.on { color: var(--accent); }
+.sc-mi-ic { width: 16px; flex: none; display: inline-flex; }

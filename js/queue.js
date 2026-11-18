@@ -49,6 +49,7 @@
     { key: 'pool.mainProci', group: 'Assignment', label: 'Main Proci gets regular tickets', type: 'bool', def: true },
     { key: 'pool.backup', group: 'Assignment', label: 'Proci Backup gets regular tickets too', type: 'bool', def: true },
     { key: 'uploadReminder', group: 'Data', label: 'Remind to load a new export after', unit: 'minutes', type: 'num', def: 45 },
+    { key: 'snowUrl', group: 'Data', label: 'ServiceNow address', unit: 'e.g. https://yourcompany.service-now.com: every INC number opens that ticket in ServiceNow', type: 'url', def: '' },
     { key: 'exportTz', group: 'Data', label: 'Time zone of the export\'s dates', type: 'tz', def: 'local' },
   ]
   const TZ_OPTIONS = [['local', "Same as this computer's clock"], ...Array.from({ length: 27 }, (_, i) => i - 12).flatMap((h) => (h === 5 ? [[String(h), 'UTC+5'], ['5.5', 'UTC+5:30']] : [[String(h), h === 0 ? 'UTC' : `UTC${h > 0 ? '+' : ''}${h}`]]))]
@@ -363,6 +364,7 @@
     short: ['short_description', 'short description'], desc: ['description'], state: ['state'],
     group: ['assignment_group', 'assignment group'], sn: ['assigned_to', 'assigned to'],
     createdBy: ['sys_created_by', 'created by'], location: ['location'],
+    sysId: ['sys_id'], // optional: when the export includes it, the link opens the exact record
   }
   const REQUIRED = ['n', 'opened', 'updated', 'short', 'state', 'group', 'sn']
   const clean = (s) => String(s || '').replace(/<br\s*\/?>/gi, ' ').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\\\|/g, '|').replace(/\s+/g, ' ').trim()
@@ -402,6 +404,7 @@
         n, opened, updated, short, priority, p: Number((priority.match(/^\d/) || [9])[0]),
         state: clean(get('state')).slice(0, 40), group: clean(get('group')).slice(0, 120), sn: clean(get('sn')).slice(0, 120),
         createdBy: clean(get('createdBy')).slice(0, 40), location: clean(get('location')).slice(0, 120),
+        ...(/^[0-9a-f]{32}$/i.test(get('sysId').trim()) && { sysId: get('sysId').trim().toLowerCase() }),
         eers: eersMatch(short, clean(get('desc')), settings.eersKeywords), // the description itself is dropped here
       }
       const prev = byN.get(n)
@@ -454,6 +457,22 @@
       ${h.backlog && html`<span class="pill" title="Untouched since before ${s.backlogHour} today">Backlog</span>`}
       <span class="muted small">${fmtAgo(h.untouched)}</span></span>`
   }
+  // The INC number links to the ticket in ServiceNow once a lead sets the ServiceNow address
+  // in Team settings (the export has no link of its own). With sys_id in the export the
+  // link opens that exact record; otherwise ServiceNow looks the number up.
+  function snowHref(n, sysId) {
+    const base = String(view().settings.snowUrl || '').trim().replace(/\/+$/, '')
+    if (!/^https:\/\//i.test(base) || !INC_RE.test(n)) return null
+    return sysId ? `${base}/incident.do?sys_id=${encodeURIComponent(sysId)}` : `${base}/incident.do?sysparm_query=${encodeURIComponent(`number=${n}`)}`
+  }
+  // INC number for tables: a link to ServiceNow, or (no address set) the button that opens the drawer.
+  const incLink = (n, sysId, { open = 'queue.open', v = n } = {}) => {
+    const href = snowHref(n, sysId)
+    return href ? html`<a class="inc-link mono" href="${href}" target="_blank" rel="noopener noreferrer" title="Open ${n} in ServiceNow">${n}${icon('external', 12)}</a>`
+      : html`<button class="btn ghost sm mono" data-click="${open}" data-v="${v}">${n}</button>`
+  }
+  // With the link on the number, the description (or a small button) opens Scope's drawer.
+  const detailsBtn = (n, sysId, { open = 'queue.open', v = n } = {}) => snowHref(n, sysId) && html`<button class="btn ghost sm inc-details" data-click="${open}" data-v="${v}" aria-label="Details of ${n} in Scope" title="Details in Scope">${icon('eye', 14)}</button>`
   const eersPill = (t) => t.eers && html`<span class="pill sky" title="${t.eers}">EERS</span>`
   const ownerCell = (t) => {
     const o = owner(t)
@@ -468,7 +487,7 @@
     const o = owner(t)
     const people = qm.roster.filter((p) => p.active !== false || p.soeid === o)
     return html`<select class="in sm owner-sel" aria-label="Owner of ${t.n}" title="Move ${t.n} to someone else" data-change="queue.reassign" data-v="${t.n}">
-        ${!o && html`<option value="" selected>${t.sn ? `${t.sn} (not on roster)` : 'Unassigned'}</option>`}
+        ${!o && html`<option value="" selected>Unassigned</option>`}
         ${people.map((p) => html`<option value="${p.soeid}" ${attrs({ selected: p.soeid === o })}>${p.name}</option>`)}
       </select>${o && !t.to && html`<div class="muted small" title="Assigned in ServiceNow">(ServiceNow)</div>`}`
   }
@@ -495,8 +514,8 @@
     if (compact) {
       const now = Date.now()
       const row = (t) => html`<tr data-key="${t.n}" class="${cls(sel === t.n && 'sel', !t.inLatest && 'muted')}">
-        <td class="qm-tcell"><div class="row tight nowrap"><button class="btn ghost sm mono" data-click="queue.open" data-v="${t.n}">${t.n}</button></div>
-          <div class="small ink2 qm-tdesc" title="${t.short}">${t.short || html`<span class="muted">(no short description)</span>`}</div></td>
+        <td class="qm-tcell"><div class="row tight nowrap">${incLink(t.n, t.sysId)}</div>
+          <button class="small ink2 qm-tdesc link-plain" data-click="queue.open" data-v="${t.n}" title="${t.short} (details in Scope)">${t.short || html`<span class="muted">(no short description)</span>`}</button></td>
         <td class="nowrap">${t.p ? html`<span class="${cls('prio', `P${t.p}`)}" title="${t.priority}">P${t.p}</span>` : t.priority}</td>
         <td class="tq-queue">${t.eers ? eersPill(t) : html`<span class="small ink2" title="${t.group}">${t.group || '—'}</span>`}</td>
         <td>${t.inLatest && OPEN_TAGS.includes(t.tag) && qm.me() ? ownerPick(t) : html`<div>${ownerCell(t)}</div>`}</td>
@@ -509,10 +528,10 @@
       let body
       if (byAnalyst) {
         const groups = new Map()
-        for (const t of list) { const o = owner(t) || (t.sn ? `sn:${t.sn}` : ''); if (!groups.has(o)) groups.set(o, []); groups.get(o).push(t) }
-        const label = (k) => (!k ? 'Unassigned' : k.startsWith('sn:') ? `${k.slice(3)} (not on the roster)` : nameOf(k))
+        for (const t of list) { const o = owner(t) || ''; if (!groups.has(o)) groups.set(o, []); groups.get(o).push(t) }
+        const label = (k) => (!k ? 'Unassigned' : nameOf(k))
         const keys = [...groups.keys()].sort((a, b) => (!a) - (!b) || label(a).localeCompare(label(b)))
-        body = keys.map((k) => html`<tr class="tq-grp" data-key="grp-${k || 'none'}"><td colspan="8"><span class="row tight">${k && !k.startsWith('sn:') ? html`<span class="avatar xs">${S.initials(label(k))}</span>` : ''}<b>${label(k)}</b><span class="muted small">${groups.get(k).length} ticket${groups.get(k).length > 1 ? 's' : ''}</span></span></td></tr>
+        body = keys.map((k) => html`<tr class="tq-grp" data-key="grp-${k || 'none'}"><td colspan="8"><span class="row tight">${k ? html`<span class="avatar xs">${S.initials(label(k))}</span>` : ''}<b>${label(k)}</b><span class="muted small">${groups.get(k).length} ticket${groups.get(k).length > 1 ? 's' : ''}</span></span></td></tr>
           ${groups.get(k).map(row)}`)
       } else body = list.map(row)
       return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl qm-compact">
@@ -522,7 +541,7 @@
     return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl">
       <thead><tr><th>INC</th><th>Short description</th><th>Priority</th>${!mine && html`<th>Owner</th>`}<th>${mine ? 'Status' : 'Tag'}</th><th>Untouched</th><th>ServiceNow state</th></tr></thead>
       <tbody>${list.map((t) => html`<tr data-key="${t.n}" class="${cls(sel === t.n && 'sel', !t.inLatest && 'muted')}">
-        <td class="nowrap"><button class="btn ghost sm mono" data-click="queue.open" data-v="${t.n}">${t.n}</button> ${eersPill(t)}</td>
+        <td class="nowrap"><span class="row tight" style="flex-wrap:nowrap">${incLink(t.n, t.sysId)}${detailsBtn(t.n, t.sysId)}${eersPill(t)}</span></td>
         <td class="qm-clip" title="${t.short}">${t.short || html`<span class="muted">(no short description)</span>`}</td>
         <td class="nowrap">${t.priority}</td>
         ${!mine && html`<td class="nowrap">${ownerCell(t)}</td>`}
@@ -541,7 +560,7 @@
     S.drawer({
       className: 'qm-drawer',
       onClose: 'queue.close',
-      title: html`<span class="row tight">${tagPill(t.tag)}${eersPill(t)}</span><h2 class="drawer-title mono">${t.n}</h2>`,
+      title: html`<span class="row tight">${tagPill(t.tag)}${eersPill(t)}</span><h2 class="drawer-title mono">${snowHref(t.n, t.sysId) ? html`<a class="inc-link" href="${snowHref(t.n, t.sysId)}" target="_blank" rel="noopener noreferrer" title="Open ${t.n} in ServiceNow">${t.n}${icon('external', 16)}</a>` : t.n}</h2>`,
       sub: html`<span class="muted small">${t.short}</span>`,
       body: html`<div class="stack" style="gap:16px">
         <dl class="qm-dl">
@@ -704,6 +723,8 @@
       // Everything open in the queue, narrowed by the filter.
       .filter((t) => isOpen(t) && (u.show === 'assigned' ? t.tag === 'Assigned' : u.show === 'backlog' ? health(t, v.settings).backlog
         : u.show === 'priority' ? t.p && t.p <= 2 : u.show === 'slo' ? health(t, v.settings).sloBreached : true))
+      // Only the team's people (lead, 2026-11-19): tickets ServiceNow assigned to someone not on the roster are left out.
+      .filter((t) => !(t.sn && !owner(t)))
       .filter((t) => !q || [t.n, t.short, t.group, t.sn, nameOf(owner(t))].join(' ').toLowerCase().includes(q))
       .sort((a, b) => (a.p || 9) - (b.p || 9) || (a.opened || 0) - (b.opened || 0))
     return html`<div>
@@ -736,7 +757,7 @@
         ${SETTINGS.filter((s) => s.group === g).map((s) => html`<label class="field"><span>${s.label}${s.unit && html` <span class="hint">${s.unit}</span>`}</span>
           ${s.type === 'bool' ? html`<select class="in" data-change="queue.set" data-k="${s.key}" ${attrs({ disabled: !lead })}><option value="true" ${attrs({ selected: val(s) === true || val(s) === 'true' })}>Yes</option><option value="false" ${attrs({ selected: val(s) === false || val(s) === 'false' })}>No</option></select>`
             : s.type === 'tz' ? html`<select class="in" data-change="queue.set" data-k="${s.key}" ${attrs({ disabled: !lead })}>${TZ_OPTIONS.map(([k, l]) => html`<option value="${k}" ${attrs({ selected: String(val(s)) === k })}>${l}</option>`)}</select>`
-            : html`<input class="in" ${attrs({ type: s.type === 'num' ? 'number' : s.type === 'time' ? 'time' : 'text', min: s.type === 'num' ? '0' : null, step: s.type === 'num' ? 'any' : null, disabled: !lead })} value="${val(s)}" data-input="queue.set" data-k="${s.key}">`}
+            : html`<input class="in" ${attrs({ type: s.type === 'num' ? 'number' : s.type === 'time' ? 'time' : s.type === 'url' ? 'url' : 'text', placeholder: s.type === 'url' ? 'https://yourcompany.service-now.com' : null, min: s.type === 'num' ? '0' : null, step: s.type === 'num' ? 'any' : null, disabled: !lead })} value="${val(s)}" data-input="queue.set" data-k="${s.key}">`}
           ${u.tried && errs[s.key] && html`<span class="qm-err" role="alert">${errs[s.key]}</span>`}</label>`)}
       </div></div>`)}
       ${lead && html`<div class="row"><span class="muted small">${dirty.length ? `${dirty.length} unsaved change${dirty.length > 1 ? 's' : ''}` : 'No changes'}</span><span class="spacer"></span>
@@ -753,6 +774,7 @@
     if (s.type === 'num') return v === '' || isNaN(Number(v)) || Number(v) < 0 ? 'Enter a number (0 or more).' : null
     if (s.type === 'time') return /^\d{2}:\d{2}$/.test(String(v)) ? null : 'Use HH:MM.'
     if (s.type === 'text') return String(v).trim() ? null : 'Add at least one keyword.'
+    if (s.type === 'url') return !String(v).trim() || /^https:\/\/[^\s/]+\.[^\s/]+\/?$/i.test(String(v).trim()) ? null : 'Use the address only, starting with https:// (e.g. https://yourcompany.service-now.com).'
     return null
   }
   async function saveSettings() {
@@ -838,7 +860,7 @@
   }
 
   // ---------- Exports ----------
-  S.queue = { parseCsv, readText, workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
+  S.queue = { snowHref, incLink, detailsBtn, parseCsv, readText, workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
     _test: { parseCsv, normalise, parseWhen, eersMatch, fold, shiftWindow, rebalancePlan } }
 
   // Loading the export lives on Home; the ticket list on Queue Management → Team queue.

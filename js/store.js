@@ -55,8 +55,8 @@ function assign(state, ticket) {
 }
 
 let toastSeq = 0
-function toast(state, text) {
-  return { ...state, toasts: [...state.toasts, { id: ++toastSeq, text }] }
+function toast(state, text, tone) {
+  return { ...state, toasts: [...state.toasts, { id: ++toastSeq, text, tone }] }
 }
 
 function reducer(state, a) {
@@ -176,7 +176,7 @@ function reducer(state, a) {
     case 'readAll':
       return { ...state, read: { ...state.read, ...Object.fromEntries(a.ids.map((i) => [i, true])) } }
     case 'toast':
-      return toast(state, a.text)
+      return toast(state, a.text, a.tone)
     case 'dismissToast':
       return { ...state, toasts: state.toasts.filter((t) => t.id !== a.id) }
     case 'addMember': {

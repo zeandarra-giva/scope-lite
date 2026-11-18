@@ -128,7 +128,7 @@
       const handled = p.resolved + p.transferred + p.manual + p.histDone
       const credit = p.received + p.manual
       return { ...p, handled, credit, perDay: p.worked ? credit / p.worked : null }
-    }).filter((p) => p.onRoster || p.credit || p.handled)
+    }).filter((p) => p.onRoster) // only people on the roster (lead, 2026-11-19)
       .sort((a, b) => b.credit - a.credit || a.name.localeCompare(b.name))
     const total = [...perDay.values()].reduce((a, b) => a + b, 0)
     const activeDays = [...perDay.values()].filter((n) => n > 0).length
@@ -182,7 +182,7 @@
         <div class="tbl-wrap"><table class="tbl mr-tbl">
           <thead><tr><th>Analyst</th><th class="num">Received</th><th class="num">Handled</th><th class="num">Transferred</th><th class="num">EERS</th><th class="num">Manual</th><th class="num">3-Strike</th><th class="num">Days worked</th><th class="num">Per day worked</th><th class="num">Main / Backup / Weekend</th></tr></thead>
           <tbody>${m.list.map((p) => html`<tr data-key="${p.soeid || p.name}">
-            <td>${p.name}${!p.onRoster && html` <span class="muted small">(QueueManager, not on the roster)</span>`}</td>
+            <td>${p.name}</td>
             <td class="num">${p.received}</td><td class="num"><b>${p.handled}</b></td><td class="num">${p.transferred}</td><td class="num">${p.eers}</td>
             <td class="num">${p.manual}</td><td class="num">${p.strikes}</td><td class="num">${p.worked}</td><td class="num">${n1(p.perDay)}</td>
             <td class="num nowrap">${p.main} / ${p.backup} / ${p.weekend}</td>
@@ -206,7 +206,7 @@
           <label class="btn sm"><input type="file" accept=".csv" multiple hidden data-change="mr.eodFiles">${icon('upload', 14)}Choose the 3 CSV files</label>
           <div class="row tight small">${['eod', 'sessions', 'members'].map((k) => html`<span class="${cls('pill', u.files[k] ? 'good' : '')}">${{ eod: 'tbl_EODReports', sessions: 'tbl_DaySessions', members: 'tbl_Members' }[k]}${u.files[k] ? ` · ${u.files[k].rows.length} rows` : ''}</span>`)}</div>
           ${u.error && html`<div class="callout warn small">${icon('alert', 15)}<span>${u.error}</span></div>`}
-          ${u.preview && html`<div class="callout small">${icon('info', 15)}<span><b>${u.preview.rows.length} person-days</b> from ${u.preview.from} to ${u.preview.to}, ${u.preview.people} people${u.preview.unmatched.length ? `. Not on the roster (kept by name): ${u.preview.unmatched.join(', ')}` : ''}${u.preview.skipped ? `. ${u.preview.skipped} rows skipped (no session date)` : ''}.</span>
+          ${u.preview && html`<div class="callout small">${icon('info', 15)}<span><b>${u.preview.rows.length} person-days</b> from ${u.preview.from} to ${u.preview.to}, ${u.preview.people} people${u.preview.unmatched.length ? `. Left out, not on the roster: ${u.preview.unmatched.join(', ')}` : ''}${u.preview.skipped ? `. ${u.preview.skipped} rows skipped (no session date)` : ''}.</span>
             <span class="spacer"></span><button class="btn primary sm" data-click="mr.eodImport">Import</button><button class="btn ghost sm" data-click="mr.eodCancel">Cancel</button></div>`}
           ${h.imports.length > 0 && html`<div class="small muted">${h.imports.map((x) => html`<div class="row tight">Imported ${new Date(x.at).toLocaleString()} by ${Q().nameOf(x.by)} · ${x.rows.length} rows <button class="btn ghost sm" data-click="mr.eodUndo" data-v="${x.id}">Undo</button></div>`)}</div>`}`
         : html`<span class="small muted">A lead imports it.</span>`}
@@ -267,8 +267,9 @@
       x.assigned += num(r, c.a); x.done += num(r, c.d); x.pending += num(r, c.p); x.backlog += num(r, c.b); x.slo += num(r, c.slo); x.sla += num(r, c.sla)
       acc.set(key, x)
     }
-    const rows = [...acc.values()].sort((a, b) => a.day.localeCompare(b.day))
-    return { rows, from: rows.length ? rows[0].day : '-', to: rows.length ? rows[rows.length - 1].day : '-', people: new Set(rows.map((r) => r.soeid || r.name)).size, unmatched: [...new Set(rows.filter((r) => !r.soeid).map((r) => r.name))], skipped }
+    const all = [...acc.values()].sort((a, b) => a.day.localeCompare(b.day))
+    const rows = all.filter((r) => r.soeid) // only people on the roster
+    return { rows, from: rows.length ? rows[0].day : '-', to: rows.length ? rows[rows.length - 1].day : '-', people: new Set(rows.map((r) => r.soeid || r.name)).size, unmatched: [...new Set(all.filter((r) => !r.soeid).map((r) => r.name))], skipped }
   }
 
   function exportCsv() {

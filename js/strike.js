@@ -84,7 +84,7 @@
             : html`<span class="small muted">Waiting for ${who ? `${nameOf(who)} (${r.wd >= 5 ? 'Weekend Support' : 'Proci Backup'})` : 'a lead'} to approve</span>`}</div>
         <div class="tbl-wrap"><table class="tbl qm-compact"><thead><tr><th>Ticket</th><th>Strike</th><th>Owner</th><th>Goes to</th></tr></thead>
           <tbody>${sug.map((g) => html`<tr data-key="s${g.n}">
-            <td class="qm-tcell"><button class="btn ghost sm mono" data-click="queue.open" data-v="${g.n}">${g.n}</button><div class="small ink2 qm-tdesc" title="${g.x.t.short}">${g.x.t.short}</div></td>
+            <td class="qm-tcell"><span class="row tight" style="flex-wrap:nowrap">${Q().incLink(g.n, g.x.t.sysId)}${Q().detailsBtn(g.n, g.x.t.sysId)}</span><div class="small ink2 qm-tdesc" title="${g.x.t.short}">${g.x.t.short}</div></td>
             <td>${strikePill(g.x)}</td>
             <td class="small">${nameOf(Q().owner(g.x.t)) || '—'}</td>
             <td>${approver ? html`<select class="in sm" aria-label="Who takes ${g.n}" data-change="strike.pick" data-v="${g.n}">${people.map((p) => html`<option value="${p.soeid}" ${attrs({ selected: p.soeid === g.to })}>${p.person.name}</option>`)}</select>` : html`<span class="small">${nameOf(g.to)}</span>`}</td>
@@ -94,7 +94,7 @@
       ${list.length ? html`<div class="tbl-wrap"><table class="tbl qm-compact">
         <thead><tr><th>Ticket</th><th>Strike</th><th>Owner</th><th>Today</th><th>Last</th></tr></thead>
         <tbody>${list.map((x) => html`<tr data-key="${x.t.n}">
-          <td class="qm-tcell"><div class="row tight nowrap"><button class="btn ghost sm mono" data-click="queue.open" data-v="${x.t.n}">${x.t.n}</button>${Q().eersPill(x.t)}</div><div class="small ink2 qm-tdesc" title="${x.t.short}">${x.t.short}</div></td>
+          <td class="qm-tcell"><div class="row tight nowrap">${Q().incLink(x.t.n, x.t.sysId)}${Q().detailsBtn(x.t.n, x.t.sysId)}${Q().eersPill(x.t)}</div><div class="small ink2 qm-tdesc" title="${x.t.short}">${x.t.short}</div></td>
           <td>${strikePill(x)}</td>
           <td class="small">${nameOf(Q().owner(x.t)) || '—'}</td>
           <td class="small">${x.triedToday ? html`<span class="pill good">Done</span>` : x.to ? nameOf(x.to) : x.due ? html`<span class="pill warn">Not given out</span>` : html`<span class="muted">${x.heldToday ? 'Starts tomorrow' : 'Not due'}</span>`}</td>
@@ -112,7 +112,7 @@
     return html`<div class="tbl-wrap"><table class="tbl qm-tbl">
       <thead><tr><th>INC</th><th>Short description</th><th>Strike</th><th>Owner</th><th>Last</th><th></th></tr></thead>
       <tbody>${list.map((x) => html`<tr data-key="${x.t.n}" class="${cls(x.triedToday && 'muted')}">
-        <td class="nowrap"><button class="btn ghost sm mono" data-click="queue.open" data-v="${x.t.n}">${x.t.n}</button></td>
+        <td class="nowrap"><span class="row tight" style="flex-wrap:nowrap">${Q().incLink(x.t.n, x.t.sysId)}${Q().detailsBtn(x.t.n, x.t.sysId)}</span></td>
         <td class="qm-clip" title="${x.t.short}">${x.t.short}</td>
         <td>${strikePill(x)}</td>
         <td class="small">${nameOf(Q().owner(x.t))}</td>

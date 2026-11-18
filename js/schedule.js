@@ -117,63 +117,73 @@
   }
 
   // ---------- Schedule & coverage ----------
-  // Every person × day is a cell. One-click mode: pick a brush (Early, Late, Leave,
-  // Clear), then each click on a cell applies it. The "Week" column sets the shift for
-  // the whole week (carried forward); a day cell sets that day only.
-  const ui = () => S.ui('p:team:schedreal', () => ({ week: R().mondayOf(R().today()), brush: null }))
+  // Every person × day is a cell. Click a day you may change (your own, or anyone's for a
+  // lead) and a small menu offers the choices in words: Early, Late, On leave, Back to the
+  // usual shift, and for a lead the whole week. Roles (Main Proci, Backup) come from the rota.
+  const ui = () => S.ui('p:team:schedreal', () => ({ week: R().mondayOf(R().today()), menu: null }))
   const showWeek = (wk) => S.set(ui(), { week: wk })
-  const ROLE_CHIP = { MAIN_PROCI: ['Main', 'accent'], PROCI_BACKUP: ['Backup', 'sky'], WEEKEND_SUPPORT: ['Weekend', 'navy'] }
-  const BRUSHES = [
-    { id: 'EARLY', label: 'Early', sw: 'E' },
-    { id: 'LATE', label: 'Late', sw: 'L' },
-    { id: 'LEAVE', label: 'Leave', sw: 'PL' },
-    { id: 'CLEAR', label: 'Clear', ic: 'x' },
-  ]
-  const brushLabel = (id) => (BRUSHES.find((b) => b.id === id) || {}).label || id
+  const ROLE_CHIP = { MAIN_PROCI: 'Main Proci', PROCI_BACKUP: 'Backup', WEEKEND_SUPPORT: 'Weekend' }
+  const LABEL = { EARLY: 'Early', LATE: 'Late', LEAVE: 'Leave', CLEAR: 'Back to usual' }
+  const brushLabel = (id) => LABEL[id] || id
   const isWeekendDay = (day) => (R().parse(day).getDay() + 6) % 7 >= 5
 
-  function canPaint(brush, soeid, day, lead) {
-    if (!brush) return false
-    if (brush === 'LEAVE') return R().canLeave(soeid)
-    if (brush === 'CLEAR') return lead || (R().onLeave(soeid, day) && R().canLeave(soeid))
-    // Shifts: a lead for anyone, everyone else for their own days.
-    return (lead || (qm.me() && qm.me().soeid === soeid)) && !isWeekendDay(day)
-  }
+  // Who may change a cell: a lead anyone's; everyone else their own (shifts on weekdays, and leave).
+  const canEdit = (soeid, lead) => lead || (qm.me() && qm.me().soeid === soeid) || R().canLeave(soeid)
   function cellBody(pl) {
     if (pl.role === 'LEAVE') return html`<span class="ev PL sc-chip">Leave</span>`
-    if (pl.role === 'REST') return html`<span class="sc-chip off">Rest</span>`
+    if (pl.role === 'REST') return html`<span class="sc-chip off">Rest day</span>`
     if (pl.shift === 'OFF') return html`<span class="sc-chip off">Off</span>`
     if (pl.shift === 'WEEKEND') return html`<span class="ev W sc-chip">Weekend</span>`
-    const chip = ROLE_CHIP[pl.role]
+    const role = ROLE_CHIP[pl.role]
     return html`${pl.shift
-      ? html`<span class="${cls('ev sc-chip', pl.shift === 'EARLY' ? 'E' : 'L')}" title="${pl.oneDay ? 'Set for this day only' : pl.auto ? 'Default (meets the Early and Late minimums)' : 'From the week\'s shift'}">${S.shiftLabel(pl.shift)}${pl.oneDay && html`<i class="sc-dot" aria-label="this day only"></i>`}</span>`
-      : html`<span class="sc-chip unset" title="No shift set for this person">Shift?</span>`}
-      ${chip && html`<span class="${cls('pill', chip[1])}">${chip[0]}</span>`}`
+      ? html`<span class="${cls('ev sc-chip', pl.shift === 'EARLY' ? 'E' : 'L')}" title="${pl.oneDay ? 'Changed for this day only' : pl.auto ? "Scope's plan (meets the Early and Late minimums)" : "This week's shift"}">${S.shiftLabel(pl.shift)}${pl.oneDay && html`<i class="sc-dot" aria-label="changed for this day only"></i>`}</span>`
+      : html`<span class="sc-chip unset" title="No shift set for this person">No shift</span>`}
+      ${role && html`<span class="sc-role">${icon('shield', 11)}${role}</span>`}`
   }
-  function cell(p, day, brush, lead) {
+  function cell(p, day, lead) {
     const pl = planFor(p.soeid, day)
     const today = day === R().today()
     const what = pl.role === 'LEAVE' ? 'on leave' : pl.role === 'REST' ? 'rest day' : pl.shift === 'OFF' ? 'off' : pl.shift ? S.shiftLabel(pl.shift) : 'no shift set'
-    if (!canPaint(brush, p.soeid, day, lead)) return html`<td class="${cls('sc-td', today && 'today')}"><div class="sc-cell ro">${cellBody(pl)}</div></td>`
-    return html`<td class="${cls('sc-td', today && 'today')}"><button class="sc-cell" data-click="sched.paint" data-s="${p.soeid}" data-d="${day}"
-      aria-label="${p.name}, ${R().fmtDay(day)}: ${what}. Click to set ${brushLabel(brush)}">${cellBody(pl)}</button></td>`
+    if (!canEdit(p.soeid, lead)) return html`<td class="${cls('sc-td', today && 'today')}"><div class="sc-cell ro">${cellBody(pl)}</div></td>`
+    const open = S.pop === 'scmenu' && ui().menu && ui().menu.s === p.soeid && ui().menu.d === day
+    return html`<td class="${cls('sc-td', today && 'today')}" data-pop-anchor="scmenu"><button class="${cls('sc-cell', open && 'open')}" data-click="sched.menu" data-s="${p.soeid}" data-d="${day}"
+      aria-haspopup="menu" aria-expanded="${open}" aria-label="${p.name}, ${R().fmtDay(day)}: ${what}. Change">${cellBody(pl)}<span class="sc-edit" aria-hidden="true">${icon('chevDown', 12)}</span></button></td>`
   }
-  function weekCell(p, v, lead, brush) {
-    const u = ui()
-    const sh = plannedShift(p.soeid, u.week, v)
-    const own = v.plan.get(`${u.week}|${p.soeid}`)
-    const body = sh ? html`<span class="${cls('ev sc-chip', sh === 'EARLY' ? 'E' : 'L')}">${S.shiftLabel(sh)}</span>${!own && html`<span class="muted small">carried</span>`}` : html`<span class="sc-chip unset">Not set</span>`
-    if (!(lead && ['EARLY', 'LATE', 'CLEAR'].includes(brush))) return html`<td class="sc-td sc-wk"><div class="sc-cell ro">${body}</div></td>`
-    return html`<td class="sc-td sc-wk"><button class="sc-cell" data-click="sched.paintWeek" data-s="${p.soeid}"
-      aria-label="${p.name}, whole week: ${sh ? S.shiftLabel(sh) : 'not set'}. Click to set ${brush === 'CLEAR' ? 'back to the carried shift' : brushLabel(brush)} for the week">${body}</button></td>`
+  // The menu for one cell, fixed to the screen under the clicked cell.
+  function cellMenu(lead) {
+    const m = ui().menu
+    if (S.pop !== 'scmenu' || !m) return ''
+    const pl = planFor(m.s, m.d)
+    const own = qm.me() && qm.me().soeid === m.s
+    const shifts = (lead || own) && !isWeekendDay(m.d) && pl.role !== 'LEAVE' && pl.role !== 'REST'
+    const who = nameOf(m.s).split(' ')[0]
+    const W = 248
+    const left = Math.max(8, Math.min(m.x, window.innerWidth - W - 8))
+    const below = m.y + 300 < window.innerHeight
+    const pos = below ? `left:${left}px;top:${m.y + 4}px` : `left:${left}px;bottom:${window.innerHeight - m.top + 4}px`
+    const item = (b, label, sub, on) => html`<button role="menuitemradio" aria-checked="${!!on}" class="${cls('sc-mi', on && 'on')}" data-click="sched.set" data-b="${b}">
+        <span class="sc-mi-ic">${on ? icon('check', 14) : ''}</span><span class="stack" style="gap:0"><span>${label}</span>${sub && html`<span class="small muted">${sub}</span>`}</span></button>`
+    return html`<div class="sc-menu" role="menu" data-pop-anchor="scmenu" style="${pos};width:${W}px" aria-label="${who}, ${R().fmtDay(m.d)}">
+      <div class="sc-mh"><b>${nameOf(m.s)}</b><span class="small muted">${R().fmtDay(m.d, { weekday: 'long', day: 'numeric', month: 'short' })}</span></div>
+      ${pl.role === 'REST' && html`<div class="small muted sc-mnote">Rest day in the Proci rota.</div>`}
+      ${isWeekendDay(m.d) && pl.role !== 'LEAVE' && html`<div class="small muted sc-mnote">Weekends follow the Proci rota.</div>`}
+      ${shifts && html`<span class="eyebrow sc-msec">This day</span>
+        ${item('EARLY', 'Early', null, pl.shift === 'EARLY')}
+        ${item('LATE', 'Late', null, pl.shift === 'LATE')}`}
+      ${pl.role === 'LEAVE' ? R().canLeave(m.s) && item('CLEAR', 'Remove leave', 'Back to work this day', false)
+        : R().canLeave(m.s) && item('LEAVE', 'On leave', 'The rota adjusts by itself', false)}
+      ${pl.oneDay && pl.role !== 'LEAVE' && item('CLEAR', "Back to the week's shift", 'Undo the change for this day', false)}
+      ${lead && !isWeekendDay(m.d) && html`<span class="eyebrow sc-msec">Whole week of ${R().fmtDay(ui().week, { day: 'numeric', month: 'short' })}</span>
+        <button role="menuitem" class="sc-mi" data-click="sched.setWeek" data-b="EARLY"><span class="sc-mi-ic"></span>Early all week</button>
+        <button role="menuitem" class="sc-mi" data-click="sched.setWeek" data-b="LATE"><span class="sc-mi-ic"></span>Late all week</button>
+        <button role="menuitem" class="sc-mi" data-click="sched.setWeek" data-b="CLEAR"><span class="sc-mi-ic"></span><span class="stack" style="gap:0"><span>Usual shift all week</span><span class="small muted">Carry last week's, or Scope's plan</span></span></button>`}
+    </div>`
   }
-
   function schedulePanel() {
     const v = view()
     const me = qm.me()
     const lead = me && me.accessRole === 'Lead'
     const u = ui()
-    const brush = u.brush
     const days = Array.from({ length: 7 }, (_, i) => R().addDays(u.week, i))
     // Rows: the Proci queue in order (drag to reorder), then anyone not in it.
     const st = R().pqState()
@@ -206,11 +216,7 @@
       const r = R().dayRoles(d)
       return { early: pl.filter((x) => x.shift === 'EARLY').length, late: pl.filter((x) => x.shift === 'LATE').length, weekend: pl.filter((x) => x.shift === 'WEEKEND').length, unset: pl.filter((x) => x.shift === null && x.role !== 'LEAVE' && x.role !== 'REST').length, gaps: r.gaps, notes: r.notes }
     })
-    const brushes = BRUSHES.filter((b) => lead || !b.lead)
-    const hint = !brush ? (lead ? 'Pick a brush, then click cells to set shifts or leave in one click.' : 'Pick Early, Late or Leave, then click your own days. Each day needs at least the Early and Late minimums.')
-      : brush === 'LEAVE' ? `Click a day to put ${lead ? 'someone' : 'yourself'} on leave.`
-        : brush === 'CLEAR' ? 'Click a day to remove its leave or its one-day shift; click the Week column to go back to the carried shift.'
-          : `Click a day to make it ${brushLabel(brush)} for that day only, or the Week column for the whole week.`
+    const mn = mins()
     // The month calendar (roles, leave, coverage) is the main view; the week's shift grid,
     // whose rows are the Proci queue, sits under it. Gaps and changes go to the bell.
     return html`<div class="stack" style="gap:16px">
@@ -225,26 +231,28 @@
           <span class="muted small">Proci <b>${R().procOf(u.week) ? nameOf(R().procOf(u.week)) : 'not set'}</b></span>
         </div>
         <div class="card-b stack" style="gap:10px">
-          <div class="brush-bar" role="radiogroup" aria-label="One-click brush">
-            <span class="eyebrow">One-click</span>
-            <button class="${cls('brush', !brush && 'on')}" role="radio" aria-checked="${!brush}" data-click="sched.brush" data-v="">${icon('eye', 13)}View</button>
-            ${brushes.map((b) => html`<button class="${cls('brush', brush === b.id && 'on')}" role="radio" aria-checked="${brush === b.id}" data-click="sched.brush" data-v="${b.id}">${b.sw ? html`<i class="ev-sw ${b.sw}"></i>` : icon(b.ic, 13)}${b.label}</button>`)}
+          <div class="sc-help">
+            <span class="ink2">${icon('edit', 14)} <b>Click ${lead ? 'any day' : 'one of your days'}</b> to change the shift or add leave.${lead ? ' The menu also sets a whole week.' : ` Each weekday needs at least ${mn.early} on Early and ${mn.late} on Late.`}</span>
+            <span class="sc-legend small muted">
+              <span><span class="ev E sc-chip sm">Early</span> <span class="ev L sc-chip sm">Late</span> <span class="ev PL sc-chip sm">Leave</span> shifts</span>
+              <span><span class="sc-role">${icon('shield', 11)}Main Proci</span> <span class="sc-role">${icon('shield', 11)}Backup</span> from the Proci rota</span>
+              <span><i class="sc-dot"></i> changed for that day only</span>
+            </span>
           </div>
-          <span class="small ${brush ? 'ink2' : 'muted'}">${icon('bolt', 13)} ${hint}</span>
           ${R().pqControls(st)}
         </div>
-        <div class="tbl-wrap tbl-scroll"><table class="${cls('tbl sched-real', brush && 'painting')}">
-          <thead><tr><th>Analyst</th><th>Week</th>${days.map((d, i) => html`<th class="${cls(d === R().today() && 'today')}">${WD[i]} <span class="muted">${R().fmtDay(d, { day: 'numeric' })}</span></th>`)}</tr></thead>
+        <div class="tbl-wrap tbl-scroll" data-scroll="sched.scroll"><table class="tbl sched-real">
+          <thead><tr><th>Analyst</th>${days.map((d, i) => html`<th class="${cls(d === R().today() && 'today')}">${WD[i]} <span class="muted">${R().fmtDay(d, { day: 'numeric' })}</span></th>`)}</tr></thead>
           <tbody>${inQ.map((p, i) => html`<tr data-key="${p.soeid}" class="${cls('pq-tr', qu.drag === p.soeid && 'dragging', qu.over === p.soeid && qu.drag && qu.drag !== p.soeid && 'over', nowP === p.soeid && 'now')}"
               ${attrs({ draggable: lead ? 'true' : null })} data-v="${p.soeid}" data-dragstart="rota.qDragStart" data-dragover="rota.qDragOver" data-drop="rota.qDrop" data-dragend="rota.qDragEnd">
             ${nameCell(p, i)}
-            ${weekCell(p, v, lead, brush)}
-            ${days.map((d) => cell(p, d, brush, lead))}</tr>`)}
-            ${outQ.length > 0 && inQ.length > 0 && html`<tr class="pq-sep"><td colspan="${days.length + 2}">Not in the Proci queue</td></tr>`}
-            ${outQ.map((p) => html`<tr data-key="${p.soeid}">${nameCell(p, -1)}${weekCell(p, v, lead, brush)}${days.map((d) => cell(p, d, brush, lead))}</tr>`)}</tbody>
-          <tfoot><tr><td colspan="2"><b>Coverage</b></td>${cover.map((c, i) => html`<td class="small">${i < 5 ? html`E ${c.early} · L ${c.late}` : html`W ${c.weekend}`}${c.unset > 0 && html`<div class="warn-t">${c.unset} no shift</div>`}${c.gaps.length > 0 && html`<div class="warn-t" title="${c.gaps.join('; ')}">⚠️ ${c.gaps.length} gap${c.gaps.length > 1 ? 's' : ''}</div>`}</td>`)}</tr></tfoot>
+            ${days.map((d) => cell(p, d, lead))}</tr>`)}
+            ${outQ.length > 0 && inQ.length > 0 && html`<tr class="pq-sep"><td colspan="${days.length + 1}">Not in the Proci queue</td></tr>`}
+            ${outQ.map((p) => html`<tr data-key="${p.soeid}">${nameCell(p, -1)}${days.map((d) => cell(p, d, lead))}</tr>`)}</tbody>
+          <tfoot><tr><td><b>Coverage</b><div class="small muted">Minimum ${mn.early} Early · ${mn.late} Late</div></td>${cover.map((c, i) => html`<td class="small">${i < 5 ? html`<span class="${cls((c.early < mn.early || c.late < mn.late) && 'warn-t')}">${c.early} Early · ${c.late} Late${(c.early < mn.early || c.late < mn.late) ? ' (short)' : ''}</span>` : html`${c.weekend} on Weekend`}${c.unset > 0 && html`<div class="warn-t">${c.unset} no shift</div>`}${c.gaps.length > 0 && html`<div class="warn-t" title="${c.gaps.join('; ')}">⚠️ ${c.gaps.length} gap${c.gaps.length > 1 ? 's' : ''}</div>`}</td>`)}</tr></tfoot>
         </table></div>
       </div>
+      ${cellMenu(lead)}
       ${R().leaveCard()}
     </div>`
   }
@@ -554,52 +562,71 @@
   S.liveNotifications = liveNotifications
   S.schedule = { coverage, defaultShifts, rosterPanel, real, planFor, plannedShift, todayPresence, schedulePanel, attendancePanel, editModal, showWeek, weekPreview, _test: { fold } }
 
+  // Change one person's day (from the cell menu). brush: EARLY, LATE, LEAVE or CLEAR.
+  async function setDay(soeid, day, brush) {
+    const pl = planFor(soeid, day)
+    const who = nameOf(soeid).split(' ')[0]
+    const when = R().fmtDay(day)
+    const toast = (text) => S.dispatch({ type: 'toast', text })
+    if (brush === 'LEAVE') {
+      const r = await R().addLeave(soeid, day, day)
+      if (r === 'already') toast(`${who} is already on leave on ${when}`); else if (r) toast(`${who}: leave on ${when}`)
+      return
+    }
+    if (brush === 'CLEAR') {
+      if (pl.role === 'LEAVE') { if (await R().removeLeaveDay(soeid, day)) toast(`${who}: leave removed on ${when}`); return }
+      if (pl.oneDay) { if (await qm.send({ type: 'shiftDaySet', day, soeid, shift: null })) toast(`${who}: back to the week's shift on ${when}`); return }
+      toast(`Nothing to clear for ${who} on ${when}`)
+      return
+    }
+    if (pl.role === 'LEAVE') { toast(`${who} is on leave on ${when}. Clear the leave first.`); return }
+    if (pl.role === 'REST') { toast(`${when} is ${who}'s rest day in the Proci rota`); return }
+    if (pl.shift === brush) return
+    // Same as the week's shift: drop the one-day entry rather than store a copy.
+    const shift = plannedShift(soeid, day) === brush ? null : brush
+    // Analysts can't leave the day under the minimums; a lead can (the day shows short).
+    const me = qm.me()
+    if (!(me && me.accessRole === 'Lead')) {
+      const c = coverage(day)
+      const m = mins()
+      const e = c.early - (pl.shift === 'EARLY' ? 1 : 0) + (brush === 'EARLY' ? 1 : 0)
+      const l = c.late - (pl.shift === 'LATE' ? 1 : 0) + (brush === 'LATE' ? 1 : 0)
+      if (e < m.early || l < m.late) { toast(`${when} needs at least ${m.early} on Early and ${m.late} on Late. Swap with someone, or ask a lead.`); return }
+    }
+    if (await qm.send({ type: 'shiftDaySet', day, soeid, shift })) toast(`${who}: ${brushLabel(brush)} on ${when}`)
+    
+  }
+  // A lead sets one person's shift for the whole week shown (CLEAR = back to the carried shift).
+  async function setWeek(soeid, brush) {
+    const { week } = ui()
+    const shift = brush === 'CLEAR' ? null : brush
+    const oneDays = [...view().dayPlan.keys()].map((k) => k.split('|')).filter(([d, s]) => s === soeid && R().mondayOf(d) === week)
+    if (!(await qm.send({ type: 'shiftPlanSet', week, soeid, shift }))) return
+    for (const [d] of oneDays) if (!(await qm.send({ type: 'shiftDaySet', day: d, soeid, shift: null }))) return
+    S.dispatch({ type: 'toast', text: `${nameOf(soeid)}: ${shift ? S.shiftLabel(shift) : 'back to the carried shift'} for the week of ${R().fmtDay(week, { day: 'numeric', month: 'short' })}` })
+  }
+  // The cell menu is fixed to the screen, so close it when the page or the grid scrolls.
+  window.addEventListener('scroll', () => { if (S.pop === 'scmenu') { S.pop = null; S.render() } }, true)
+
   S.on({
     'sched.week': (el) => S.set(ui(), { week: el.dataset.v }),
-    'sched.brush': (el) => { const u = ui(); S.set(u, { brush: el.dataset.v && u.brush !== el.dataset.v ? el.dataset.v : null }) },
-    'sched.paint': async (el) => {
-      const { brush } = ui()
-      const soeid = el.dataset.s
-      const day = el.dataset.d
-      const pl = planFor(soeid, day)
-      const who = nameOf(soeid).split(' ')[0]
-      const when = R().fmtDay(day)
-      const toast = (text) => S.dispatch({ type: 'toast', text })
-      if (brush === 'LEAVE') {
-        const r = await R().addLeave(soeid, day, day)
-        if (r === 'already') toast(`${who} is already on leave on ${when}`); else if (r) toast(`${who}: leave on ${when}`)
-        return
-      }
-      if (brush === 'CLEAR') {
-        if (pl.role === 'LEAVE') { if (await R().removeLeaveDay(soeid, day)) toast(`${who}: leave removed on ${when}`); return }
-        if (pl.oneDay) { if (await qm.send({ type: 'shiftDaySet', day, soeid, shift: null })) toast(`${who}: back to the week's shift on ${when}`); return }
-        toast(`Nothing to clear for ${who} on ${when}`)
-        return
-      }
-      if (pl.role === 'LEAVE') { toast(`${who} is on leave on ${when}. Clear the leave first.`); return }
-      if (pl.role === 'REST') { toast(`${when} is ${who}'s rest day in the Proci rota`); return }
-      if (pl.shift === brush) return
-      // Same as the week's shift: drop the one-day entry rather than store a copy.
-      const shift = plannedShift(soeid, day) === brush ? null : brush
-      // Analysts can't leave the day under the minimums; a lead can (the day shows short).
-      const me = qm.me()
-      if (!(me && me.accessRole === 'Lead')) {
-        const c = coverage(day)
-        const m = mins()
-        const e = c.early - (pl.shift === 'EARLY' ? 1 : 0) + (brush === 'EARLY' ? 1 : 0)
-        const l = c.late - (pl.shift === 'LATE' ? 1 : 0) + (brush === 'LATE' ? 1 : 0)
-        if (e < m.early || l < m.late) { toast(`${when} needs at least ${m.early} on Early and ${m.late} on Late. Swap with someone, or ask a lead.`); return }
-      }
-      if (await qm.send({ type: 'shiftDaySet', day, soeid, shift })) toast(`${who}: ${brushLabel(brush)} on ${when}`)
+    'sched.menu': (el) => {
+      const u = ui()
+      const same = S.pop === 'scmenu' && u.menu && u.menu.s === el.dataset.s && u.menu.d === el.dataset.d
+      const r = el.getBoundingClientRect()
+      u.menu = same ? null : { s: el.dataset.s, d: el.dataset.d, x: r.left, y: r.bottom, top: r.top }
+      S.pop = same ? null : 'scmenu'
+      S.render()
     },
-    'sched.paintWeek': async (el) => {
-      const { brush, week } = ui()
-      const soeid = el.dataset.s
-      const shift = brush === 'CLEAR' ? null : brush
-      const oneDays = [...view().dayPlan.keys()].map((k) => k.split('|')).filter(([d, s]) => s === soeid && R().mondayOf(d) === week)
-      if (!(await qm.send({ type: 'shiftPlanSet', week, soeid, shift }))) return
-      for (const [d] of oneDays) if (!(await qm.send({ type: 'shiftDaySet', day: d, soeid, shift: null }))) return
-      S.dispatch({ type: 'toast', text: `${nameOf(soeid)}: ${shift ? S.shiftLabel(shift) : 'back to the carried shift'} for the week of ${R().fmtDay(week, { day: 'numeric', month: 'short' })}` })
+    'sched.set': async (el) => {
+      const m = ui().menu
+      S.pop = null; S.render()
+      if (m) await setDay(m.s, m.d, el.dataset.b)
+    },
+    'sched.setWeek': async (el) => {
+      const m = ui().menu
+      S.pop = null; S.render()
+      if (m) await setWeek(m.s, el.dataset.b)
     },
     'sched.editOpen': () => {
       S.pop = null

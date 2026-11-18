@@ -27,7 +27,7 @@
       p1: open.filter((t) => t.p === 1).length, p2: open.filter((t) => t.p === 2).length, eers: open.filter((t) => t.eers).length,
       sla: h.filter((x) => x.h.slaBreached).length, slo: h.filter((x) => x.h.sloBreached && !x.h.slaBreached).length, backlog: h.filter((x) => x.h.backlog).length,
       within: open.length ? h.filter((x) => !x.h.sloBreached).length / open.length : 1,
-      unassigned: open.filter((t) => !Q().owner(t) && !t.sn).length,
+      unassigned: open.filter((t) => !Q().owner(t)).length,
       imp: Q().importHealth(v, now),
       scheduled: plans.filter((x) => x.pl.ready).length,
       leave: plans.filter((x) => x.pl.role === 'LEAVE').length,

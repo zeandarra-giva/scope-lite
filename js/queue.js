@@ -234,7 +234,10 @@
     const pool = people.filter((p) => now < p.w.cutoff)
     const counts = new Map(pool.map((p) => [p.soeid, load(p.soeid)]))
     const last = new Map() // tie-break: whoever got a ticket least recently in this batch
-    const todo = tickets.filter((t) => t.inLatest && !t.to && !t.sn && t.tag === 'Assigned')
+    // Shared out: every ticket nobody on the team holds. A ticket ServiceNow assigned to
+    // someone on the roster stays theirs (D20); one assigned to someone off the roster is
+    // shared out like an unassigned one (lead, 2026-11-19).
+    const todo = tickets.filter((t) => t.inLatest && !t.to && !owner(t) && t.tag === 'Assigned')
       .sort((a, b) => (a.p || 9) - (b.p || 9) || (a.opened || 0) - (b.opened || 0))
     const regular = pool.filter((p) => (p.duty !== 'MAIN_PROCI' || settings['pool.mainProci'] !== false) && (p.duty !== 'PROCI_BACKUP' || settings['pool.backup'] !== false))
     const backups = pool.filter((p) => p.duty === 'PROCI_BACKUP')
@@ -253,6 +256,7 @@
         if (who) why = `${t.eers ? `EERS (${t.eers}), but no Proci Backup on shift. ` : ''}Fewest handled today (${counts.get(who.soeid)}) of ${list.length} on shift`
       }
       if (!who) { left.push(t); continue }
+      if (t.sn) why += `. In ServiceNow it was with ${t.sn}, who isn't on the team: reassign it there`
       out.push({ n: t.n, to: who.soeid, reason: why })
       counts.set(who.soeid, counts.get(who.soeid) + 1)
       last.set(who.soeid, ++i)
@@ -322,7 +326,7 @@
 
   // Why open tickets are still waiting for an owner, in words (Home's "Waiting" card).
   function waitingReason(v = view(), now = Date.now()) {
-    const waiting = v.tickets.filter((t) => isOpen(t) && !owner(t) && !t.sn)
+    const waiting = v.tickets.filter((t) => isOpen(t) && !owner(t))
     if (!waiting.length) return null
     if (v.settings.autoHandout === false || v.settings.autoHandout === 'false') return 'Automatic hand-out is off in Team settings. Use Hand out in Team queue.'
     const on = onShift(now)
@@ -332,8 +336,9 @@
     if (!plan({ tickets: v.tickets, people: on, settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return 'Nobody on shift takes these tickets right now: check "Main Proci gets regular tickets" and "Proci Backup gets regular tickets too" in Team settings.'
     return 'Handing them out now…'
   }
-  // Tickets ServiceNow assigned to a name that isn't on the roster. Lists leave them out
-  // (D24), so a spelling difference would hide a team member's tickets: say so.
+  // Tickets ServiceNow assigned to a name that isn't on the roster and Scope hasn't shared out
+  // yet. They go into the equal distribution; a spelling difference in roster.json would also
+  // land a team member's tickets here, so the import preview names them.
   function unmatched(v = view()) {
     const m = new Map()
     for (const t of v.tickets) if (isOpen(t) && t.sn && !owner(t)) m.set(t.sn, (m.get(t.sn) || 0) + 1)
@@ -349,7 +354,7 @@
     if (autoBusy || !qm.online || !qm.me() || Date.now() - autoLast < 10e3) return
     const v = view()
     if (v.settings.autoHandout === false || v.settings.autoHandout === 'false') return
-    if (!v.tickets.some((t) => t.inLatest && !t.to && !t.sn && t.tag === 'Assigned')) return
+    if (!v.tickets.some((t) => t.inLatest && !t.to && !owner(t) && t.tag === 'Assigned')) return
     const now = Date.now()
     if (!plan({ tickets: v.tickets, people: onShift(now), settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return
     autoBusy = true; autoLast = now
@@ -445,7 +450,7 @@
     const newer = out.rows.filter((r) => known.has(r.n) && r.updated > (known.get(r.n).updated || 0))
     const inFile = new Set(out.rows.map((r) => r.n))
     const gone = view().tickets.filter((t) => t.inLatest && !inFile.has(t.n))
-    S.set(u, { busy: false, preview: { file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn).length, offRoster: [...new Set(out.rows.filter((r) => r.sn && !qm.roster.some((p) => norm(p.name) === norm(r.sn))).map((r) => r.sn))] } })
+    S.set(u, { busy: false, preview: { file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn && qm.roster.some((p) => norm(p.name) === norm(r.sn))).length, offRoster: [...new Set(out.rows.filter((r) => r.sn && !qm.roster.some((p) => norm(p.name) === norm(r.sn))).map((r) => r.sn))] } })
   }
   async function confirmImport() {
     const u = imp()
@@ -497,7 +502,7 @@
   const ownerCell = (t) => {
     const o = owner(t)
     if (o) return html`${nameOf(o)}${!t.to && html` <span class="muted small" title="Assigned in ServiceNow">(ServiceNow)</span>`}`
-    if (t.sn) return html`<span class="muted" title="Assigned in ServiceNow to someone not on the roster">${t.sn}</span>`
+    if (t.sn) return html`<span class="pill warn" title="In ServiceNow: ${t.sn} (not on the team). Scope shares it out like an unassigned ticket.">Unassigned</span>`
     return html`<span class="pill warn">Unassigned</span>`
   }
 
@@ -541,7 +546,7 @@
         <td>${t.inLatest && OPEN_TAGS.includes(t.tag) && qm.me() ? ownerPick(t) : html`<div>${ownerCell(t)}</div>`}</td>
         <td class="nowrap small" title="Since the ticket was opened: ${fmtWhen(t.opened)}">${t.opened ? ageShort(now - t.opened) : '—'}</td>
         <td class="nowrap small" title="Since it first came into the queue (Scope's first export with it): ${fmtWhen(t.firstSeen)}">${t.firstSeen ? ageShort(now - t.firstSeen) : '—'}</td>
-        <td class="nowrap small">${t.to ? html`<span title="${fmtWhen(t.assignedAt)}">${fmtShort(t.assignedAt)}</span>` : t.sn ? html`<span class="muted" title="Assigned in ServiceNow before it reached Scope">ServiceNow</span>` : '—'}</td>
+        <td class="nowrap small">${t.to ? html`<span title="${fmtWhen(t.assignedAt)}">${fmtShort(t.assignedAt)}</span>` : owner(t) ? html`<span class="muted" title="Assigned in ServiceNow before it reached Scope">ServiceNow</span>` : '—'}</td>
         <td class="tq-tag"><span class="row tight" style="flex-wrap:nowrap">${t.inLatest ? tagPill(t.tag) : html`<span class="pill" title="Not in the latest export: closed or moved to another group in ServiceNow">Left the queue</span>`}
           ${t.inLatest && OPEN_TAGS.includes(t.tag) && healthPills(t, s)}</span></td>
       </tr>`
@@ -658,7 +663,7 @@
           ${S.kpi({ label: 'Left the queue', icon: 'swap', tone: 'warn', value: pv.gone, foot: 'Open before, not in this file' })}
         </div>
         <div class="muted small">${pv.same} unchanged · ${pv.snAssigned} already assigned in ServiceNow (skipped, counted for that person)${pv.dupes > 0 && ` · ${pv.dupes} repeated rows merged`}</div>
-        ${pv.offRoster && pv.offRoster.length > 0 && html`<div class="callout warn small">${icon('alert', 15)}<span><b>Assigned in ServiceNow to names not on the roster:</b> ${pv.offRoster.join(', ')}. Their tickets are left out of Scope's lists. If any of them is on the team, make their name in <code>data\roster.json</code> match ServiceNow exactly.</span></div>`}
+        ${pv.offRoster && pv.offRoster.length > 0 && html`<div class="callout warn small">${icon('alert', 15)}<span><b>Assigned in ServiceNow to people not on the team:</b> ${pv.offRoster.join(', ')}. Scope shares their tickets out equally, like unassigned ones. If one of them <i>is</i> on the team, make their name in <code>data\roster.json</code> match ServiceNow exactly, or their tickets will go to others.</span></div>`}
         ${pv.skipped.length > 0 && html`<details class="small"><summary>${pv.skipped.length} rows skipped</summary><ul>${pv.skipped.slice(0, 20).map((x) => html`<li>Line ${x.line}: ${x.why}</li>`)}</ul></details>`}
         <div class="row"><span class="spacer"></span><button class="btn ghost" data-click="queue.cancel">Cancel</button>
           <button class="btn primary" data-click="queue.confirm" ${attrs({ disabled: u.busy || !pv.rows.length })}>${icon('check', 15)}Load and hand out</button></div>
@@ -715,7 +720,7 @@
     const list = (ts) => ts.map((t) => `${t.n} ${t.priority}${t.short ? ` – ${t.short}` : ''}${owner(t) ? ` (${nameOf(owner(t))})` : ''}`).join('\n  ') || 'none'
     return [
       `Handover · ${new Date(now).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })} · Main Proci ${nameOf(r.main) || '—'}`,
-      `Open: ${open.length} (P1 ${open.filter((t) => t.p === 1).length}, P2 ${open.filter((t) => t.p === 2).length}, EERS ${open.filter((t) => t.eers).length}) · unassigned ${open.filter((t) => !owner(t) && !t.sn).length} · backlog ${h.filter((x) => x.h.backlog).length}`,
+      `Open: ${open.length} (P1 ${open.filter((t) => t.p === 1).length}, P2 ${open.filter((t) => t.p === 2).length}, EERS ${open.filter((t) => t.eers).length}) · unassigned ${open.filter((t) => !owner(t)).length} · backlog ${h.filter((x) => x.h.backlog).length}`,
       `Closed today in Scope: ${done.filter((t) => t.tag === 'Resolved').length} resolved, ${done.filter((t) => t.tag === 'Transferred').length} transferred`,
       `P1/P2 still open:\n  ${list(open.filter((t) => t.p <= 2))}`,
       `Past SLA:\n  ${list(h.filter((x) => x.h.slaBreached).map((x) => x.t))}`,
@@ -739,13 +744,11 @@
     const v = view()
     const u = S.ui('p:qm:queue', { show: 'all', q: '' })
     const q = u.q.trim().toLowerCase()
-    const unassigned = v.tickets.filter((t) => t.inLatest && !owner(t) && !t.sn && t.tag === 'Assigned')
+    const unassigned = v.tickets.filter((t) => t.inLatest && !owner(t) && t.tag === 'Assigned')
     const list = v.tickets
       // Everything open in the queue, narrowed by the filter.
       .filter((t) => isOpen(t) && (u.show === 'assigned' ? t.tag === 'Assigned' : u.show === 'backlog' ? health(t, v.settings).backlog
         : u.show === 'priority' ? t.p && t.p <= 2 : u.show === 'slo' ? health(t, v.settings).sloBreached : true))
-      // Only the team's people (lead, 2026-11-19): tickets ServiceNow assigned to someone not on the roster are left out.
-      .filter((t) => !(t.sn && !owner(t)))
       .filter((t) => !q || [t.n, t.short, t.group, t.sn, nameOf(owner(t))].join(' ').toLowerCase().includes(q))
       .sort((a, b) => (a.p || 9) - (b.p || 9) || (a.opened || 0) - (b.opened || 0))
     return html`<div>
@@ -757,7 +760,6 @@
           <label class="row tight small nowrap tq-by"><input type="checkbox" data-change="queue.byAnalyst" ${attrs({ checked: !!u.byAnalyst })}>View by analyst</label>
           ${unassigned.length > 0 && html`<button class="btn sm primary" data-click="queue.handout">${icon('send', 14)}Hand out ${unassigned.length} now</button>`}
         </div>
-        ${unmatched(v).length > 0 && html`<div class="callout small tq-off">${icon('info', 15)}<span>${unmatched(v).reduce((a, x) => a + x[1], 0)} open tickets assigned in ServiceNow to people not on the roster are hidden: ${unmatched(v).map(([n, c]) => `${n} (${c})`).join(', ')}. If someone here is on the team, make their name in <code>roster.json</code> match ServiceNow exactly.</span></div>`}
         ${list.length ? ticketTable(list, v.settings, { compact: true, byAnalyst: !!u.byAnalyst }) : html`<div class="empty">${v.latest ? 'Nothing matches.' : 'No export loaded yet. Use Import data in the header.'}</div>`}
       </div>`
   }
@@ -840,7 +842,7 @@
     const h = importHealth(v)
     const open = v.tickets.filter(isOpen)
     const p1 = open.filter((t) => t.p === 1).length
-    const unassigned = open.filter((t) => !owner(t) && !t.sn).length
+    const unassigned = open.filter((t) => !owner(t)).length
     const breached = open.filter((t) => health(t, v.settings).slaBreached).length
     const today = startOfDay(Date.now())
     const loadsToday = v.imports.filter((x) => x.at >= today && !v.undone.has(x.id))

@@ -343,4 +343,3 @@ button.sc-cell:hover .sc-edit, button.sc-cell.open .sc-edit, button.sc-cell:focu
 .sc-mi:hover, .sc-mi:focus-visible { background: var(--hover); outline: none; }
 .sc-mi.on { color: var(--accent); }
 .sc-mi-ic { width: 16px; flex: none; display: inline-flex; }
-.tq-off { margin: 0 12px 10px; }

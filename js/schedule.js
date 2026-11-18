@@ -509,7 +509,7 @@
           out.push({ id: `upload|${v.latest.at}|${ih.tone}`, group: 'action', kind: 'sla', tone: stale ? 'crit' : 'warn', title: `ServiceNow data is ${stale ? 'stale' : 'due'}: last loaded ${ago} ago`, sub: `${who} a fresh export (reminder every ${v.settings.uploadReminder} min)`, at: now - 19, page: 'home' })
         }
       }
-      const waiting = open.filter((t) => !S.queue.owner(t) && !t.sn)
+      const waiting = open.filter((t) => !S.queue.owner(t))
       if (waiting.length) out.push({ id: `wait|${waiting.map((t) => t.n).join(',')}`, group: 'action', kind: 'assign', tone: 'warn', title: `${waiting.length} ticket${waiting.length > 1 ? 's' : ''} waiting for someone on shift`, sub: 'They go out automatically when someone signs in', at: now - 20, page: 'home' })
       const late = open.filter((t) => S.queue.health(t, v.settings, now).slaBreached && (lead || S.queue.owner(t) === me.soeid))
       if (late.length) out.push({ id: `sla|${late.map((t) => t.n).join(',')}`, group: 'action', kind: 'sla', tone: 'crit', title: `${late.length} ${lead ? '' : 'of your '}ticket${late.length > 1 ? 's' : ''} past SLA`, sub: late.slice(0, 4).map((t) => t.n).join(', ') + (late.length > 4 ? '…' : ''), at: now - 21, page: 'home' })

@@ -320,6 +320,26 @@
     return { handed: handed.list.length, moved: p.moves.length }
   }
 
+  // Why open tickets are still waiting for an owner, in words (Home's "Waiting" card).
+  function waitingReason(v = view(), now = Date.now()) {
+    const waiting = v.tickets.filter((t) => isOpen(t) && !owner(t) && !t.sn)
+    if (!waiting.length) return null
+    if (v.settings.autoHandout === false || v.settings.autoHandout === 'false') return 'Automatic hand-out is off in Team settings. Use Hand out in Team queue.'
+    const on = onShift(now)
+    if (!on.length) return "Nobody has started a shift today. Tickets go out by themselves as soon as someone on today's schedule signs in (or uses Start today's shift)."
+    const before = on.filter((p) => now < p.w.cutoff)
+    if (!before.length) return `Everyone on shift is past their cutoff (${S.fmtTime(Math.max(...on.map((p) => p.w.cutoff)))}), so nobody gets new tickets until the next shift starts.`
+    if (!plan({ tickets: v.tickets, people: on, settings: v.settings, now, load: (s) => loadToday(s, now, v.tickets).total }).list.length) return 'Nobody on shift takes these tickets right now: check "Main Proci gets regular tickets" and "Proci Backup gets regular tickets too" in Team settings.'
+    return 'Handing them out now…'
+  }
+  // Tickets ServiceNow assigned to a name that isn't on the roster. Lists leave them out
+  // (D24), so a spelling difference would hide a team member's tickets: say so.
+  function unmatched(v = view()) {
+    const m = new Map()
+    for (const t of v.tickets) if (isOpen(t) && t.sn && !owner(t)) m.set(t.sn, (m.get(t.sn) || 0) + 1)
+    return [...m].sort((a, b) => b[1] - a[1])
+  }
+
   // ---------- Automatic hand-out ----------
   // After every render (new data arrives every 15 s), if there are unassigned tickets and
   // someone on shift can take them, hand them out. One attempt at a time per browser,
@@ -425,7 +445,7 @@
     const newer = out.rows.filter((r) => known.has(r.n) && r.updated > (known.get(r.n).updated || 0))
     const inFile = new Set(out.rows.map((r) => r.n))
     const gone = view().tickets.filter((t) => t.inLatest && !inFile.has(t.n))
-    S.set(u, { busy: false, preview: { file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn).length } })
+    S.set(u, { busy: false, preview: { file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn).length, offRoster: [...new Set(out.rows.filter((r) => r.sn && !qm.roster.some((p) => norm(p.name) === norm(r.sn))).map((r) => r.sn))] } })
   }
   async function confirmImport() {
     const u = imp()
@@ -638,6 +658,7 @@
           ${S.kpi({ label: 'Left the queue', icon: 'swap', tone: 'warn', value: pv.gone, foot: 'Open before, not in this file' })}
         </div>
         <div class="muted small">${pv.same} unchanged · ${pv.snAssigned} already assigned in ServiceNow (skipped, counted for that person)${pv.dupes > 0 && ` · ${pv.dupes} repeated rows merged`}</div>
+        ${pv.offRoster && pv.offRoster.length > 0 && html`<div class="callout warn small">${icon('alert', 15)}<span><b>Assigned in ServiceNow to names not on the roster:</b> ${pv.offRoster.join(', ')}. Their tickets are left out of Scope's lists. If any of them is on the team, make their name in <code>data\roster.json</code> match ServiceNow exactly.</span></div>`}
         ${pv.skipped.length > 0 && html`<details class="small"><summary>${pv.skipped.length} rows skipped</summary><ul>${pv.skipped.slice(0, 20).map((x) => html`<li>Line ${x.line}: ${x.why}</li>`)}</ul></details>`}
         <div class="row"><span class="spacer"></span><button class="btn ghost" data-click="queue.cancel">Cancel</button>
           <button class="btn primary" data-click="queue.confirm" ${attrs({ disabled: u.busy || !pv.rows.length })}>${icon('check', 15)}Load and hand out</button></div>
@@ -736,6 +757,7 @@
           <label class="row tight small nowrap tq-by"><input type="checkbox" data-change="queue.byAnalyst" ${attrs({ checked: !!u.byAnalyst })}>View by analyst</label>
           ${unassigned.length > 0 && html`<button class="btn sm primary" data-click="queue.handout">${icon('send', 14)}Hand out ${unassigned.length} now</button>`}
         </div>
+        ${unmatched(v).length > 0 && html`<div class="callout small tq-off">${icon('info', 15)}<span>${unmatched(v).reduce((a, x) => a + x[1], 0)} open tickets assigned in ServiceNow to people not on the roster are hidden: ${unmatched(v).map(([n, c]) => `${n} (${c})`).join(', ')}. If someone here is on the team, make their name in <code>roster.json</code> match ServiceNow exactly.</span></div>`}
         ${list.length ? ticketTable(list, v.settings, { compact: true, byAnalyst: !!u.byAnalyst }) : html`<div class="empty">${v.latest ? 'Nothing matches.' : 'No export loaded yet. Use Import data in the header.'}</div>`}
       </div>`
   }
@@ -860,7 +882,7 @@
   }
 
   // ---------- Exports ----------
-  S.queue = { snowHref, incLink, detailsBtn, parseCsv, readText, workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
+  S.queue = { waitingReason, unmatched, snowHref, incLink, detailsBtn, parseCsv, readText, workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
     _test: { parseCsv, normalise, parseWhen, eersMatch, fold, shiftWindow, rebalancePlan } }
 
   // Loading the export lives on Home; the ticket list on Queue Management → Team queue.

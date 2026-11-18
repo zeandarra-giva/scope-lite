@@ -177,8 +177,8 @@
             </div>
           </div>`)}
         ${S.kpi({ label: 'Waiting for someone', icon: 'user', tone: m.unassigned ? 'warn' : 'good', value: m.unassigned,
-          info: html`<span>Open tickets nobody owns yet: no one was on shift before their cutoff when they loaded. Use <b>Hand out</b> once someone signs in.</span>`,
-          foot: m.unassigned ? 'Rebalance once someone is on shift' : 'Every open ticket has an owner' })}
+          info: html`<span>Open tickets nobody owns yet. Scope hands a ticket out by itself only to someone who has <b>started a shift today</b> (signed in, with a shift in Team Management) and is <b>before their cutoff</b> (${m.v.settings.cutoffMinutes} min before their shift ends). Tickets already assigned in ServiceNow are left alone.</span>`,
+          foot: m.unassigned ? Q().waitingReason(m.v, m.now) : 'Every open ticket has an owner' })}
         ${S.kpi({ label: 'On shift now', icon: 'team', tone: 'navy', value: m.nowOn, unit: `/ ${m.scheduled} scheduled`,
           info: html`<span>Signed in today and before the end of their shift. Scheduled comes from Team Management (rota and shifts).</span>`,
           foot: html`${m.leave} on leave · ${m.rest} resting` })}

@@ -16,7 +16,10 @@
     { id: 'suggestions', label: 'Suggestions', icon: 'bulb', title: 'Suggestions', managerOnly: true, desc: 'Ideas, bugs and workarounds from the team. File one in a few seconds; everyone sees the same list.' },
     { id: 'settings', label: 'Account profile', icon: 'user', title: 'Account profile', desc: 'Your profile, access, attendance history, shifts and leave.' },
   ]
-  const NAV_GROUPS = [['General', ['home', 'qm']], ['Reports', ['explorer', 'reports']], ['Tools', ['team', 'kb', 'copilot']], ['Team feedback', ['suggestions']]]
+  // The Suggestions board (Team feedback) and the sidebar's Suggest button are hidden for now
+  // (lead, 2026-11-19). Saved suggestions stay in data/suggestions.jsonl; set this to true to bring them back.
+  const FEEDBACK_ON = false
+  const NAV_GROUPS = [['General', ['home', 'qm']], ['Reports', ['explorer', 'reports']], ['Tools', ['team', 'kb', 'copilot']], ...(FEEDBACK_ON ? [['Team feedback', ['suggestions']]] : [])]
 
   // Pages register themselves here: S.pages.home = (route) => markup
   S.pages = S.pages || {}
@@ -25,7 +28,7 @@
   // Two sign-in roles. 'lead' is the Manager role's id in state and saved sessions.
   const isManager = (st) => st.role === 'lead'
   S.isManager = isManager
-  const canOpen = (p) => !p.managerOnly || isManager(S.state)
+  const canOpen = (p) => (p.id !== 'suggestions' || FEEDBACK_ON) && (!p.managerOnly || isManager(S.state))
 
   // ---------- Routing ----------
   const hashPage = () => { const h = location.hash.replace('#', ''); return PAGES.some((p) => p.id === h) ? h : 'home' }
@@ -106,10 +109,10 @@
             </div>`)}
           </div>
           <div class="rail-foot"></div>
-          <button class="rail-suggest" data-click="sugg.open" title="Suggest an idea, report a bug or share a workaround">
+          ${FEEDBACK_ON && html`<button class="rail-suggest" data-click="sugg.open" title="Suggest an idea, report a bug or share a workaround">
             <span class="rail-suggest-ic">${icon('bulb', 16)}</span>
             <span class="stack" style="gap:0;min-width:0"><b>Suggest</b><span>Idea, bug or workaround</span></span>
-          </button>
+          </button>`}
           ${profileMenu(ws, route.page === 'settings')}
         </nav>
         <div class="main">

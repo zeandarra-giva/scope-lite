@@ -181,7 +181,7 @@
     copy(snText(t, res), `${t.n} resolved with ${res.code}. Notes copied for ServiceNow`)
   }
 
-  S.liveResolve = { modal, start, snText }
+  S.liveResolve = { modal, start, snText, BREACH_REASONS }
   S.on({
     'lres.open': (el) => start(el.dataset.v),
     'lres.close': () => S.set(ui(), { n: null, f: null, step: 0 }),

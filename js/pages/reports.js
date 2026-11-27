@@ -18,9 +18,17 @@
     CHARTS.forEach((id) => { hv[id] = null })
   }
 
+  // On real team data, the Monthly report / Compare & generate switch sits at the top right
+  // of the page header (app.js reads it as the Reports page's aside).
+  S.reportsAside = () => (S.reportLive && S.schedule && S.schedule.real() && S.qm.me()
+    ? seg([{ id: 'month', label: 'Monthly report' }, { id: 'compare', label: 'Compare & generate' }], S.ui('p:reports:live', { mode: 'month' }).mode, 'reports.live') : '')
+
   S.pages.reports = function Reports() {
     // On real team data: the monthly transparency report (report-live.js).
-    if (S.reportLive && S.schedule && S.schedule.real() && S.qm.me()) return S.reportLive()
+    if (S.reportLive && S.schedule && S.schedule.real() && S.qm.me()) {
+      const lu = S.ui('p:reports:live', { mode: 'month' })
+      return lu.mode === 'compare' && S.reportCompare ? S.reportCompare() : S.reportLive()
+    }
     const u = pageUi()
     return html`
       <div class="row">
@@ -68,7 +76,7 @@
       </div>
       ${S.insightsPanel ? S.insightsPanel() : ''}
       <section class="grid g-kpi">
-        ${kpi({ label: 'Avg EZE MTTR', icon: 'clock', value: fmtH(MEASURES.eze.fn(rows)), foot: delta('eze') })}
+        ${kpi({ label: 'Avg E2E MTTR', icon: 'clock', value: fmtH(MEASURES.eze.fn(rows)), foot: delta('eze') })}
         ${kpi({ label: 'Avg RES MTTR', icon: 'bolt', tone: 'azure', value: fmtH(MEASURES.res.fn(rows)), foot: delta('res') })}
         ${kpi({ label: 'SLA attainment', icon: 'shield', value: MEASURES.sla.fmt(MEASURES.sla.fn(rows)), foot: delta('sla'), state: MEASURES.sla.fn(rows) < 0.85 ? 'warn' : 'good' })}
         ${kpi({ label: 'Ticket volume', icon: 'doc', tone: 'ice', value: rows.length, foot: delta('count') })}
@@ -79,7 +87,7 @@
           <div class="card-h"><h3>MTTR by week</h3><span class="muted small">hours, one axis</span></div>
           <div class="card-b">
             ${lineChart('reports-mttr', { labels: weekRes.map((w) => w.label), goal: RES_GOAL_H, unit: 'h', fmt: (v) => `${v.toFixed(1)}h`,
-              series: [{ name: 'EZE MTTR', color: 'var(--s2)', values: weekEze.map((w) => w.value) }, { name: 'RES MTTR', color: 'var(--s1)', values: weekRes.map((w) => w.value) }] })}
+              series: [{ name: 'E2E MTTR', color: 'var(--s2)', values: weekEze.map((w) => w.value) }, { name: 'RES MTTR', color: 'var(--s1)', values: weekRes.map((w) => w.value) }] })}
           </div>
         </div>
         <div class="card">
@@ -525,7 +533,7 @@
     if (u.sections.groups) ASSIGNMENT_GROUPS.forEach((g) => ['res', 'sla'].forEach((k) => { const ra = A.rows.filter((h) => h.assignmentGroup === g), rb = B.rows.filter((h) => h.assignmentGroup === g); rows.push(['Assignment groups', `${g} · ${MEASURES[k].label}${unitOf(k)}`, num(k, val(k, ra)), num(k, val(k, rb)), num(k, val(k, ra) - val(k, rb)), ra.length, rb.length]) }))
     if (u.sections.qa) rows.push(['Quality', 'Average QA score', Math.round(avg(A.rows.map(qaScore)) || 0), Math.round(avg(B.rows.map(qaScore)) || 0), '', A.rows.length, B.rows.length])
     if (u.withRows) {
-      rows.push([], ['Side', 'Ticket', 'Resolved', 'Priority', 'Channel', 'Business app', 'Product group', 'Assignment group', 'Analyst', 'Root cause', 'Resolution code', 'RES MTTR (h)', 'EZE MTTR (h)', 'Lost time (h)', 'SLA met', 'FCR', 'Transfers', 'QA score'])
+      rows.push([], ['Side', 'Ticket', 'Resolved', 'Priority', 'Channel', 'Business app', 'Product group', 'Assignment group', 'Analyst', 'Root cause', 'Resolution code', 'RES MTTR (h)', 'E2E MTTR (h)', 'Lost time (h)', 'SLA met', 'FCR', 'Transfers', 'QA score'])
       ;[A, B].forEach((X) => X.rows.forEach((h) => rows.push([X.key.toUpperCase(), h.id, new Date(h.resolvedAt).toLocaleString(), h.priority, h.channel, h.businessApp, h.productGroup, h.assignmentGroup, byId[h.analyst]?.name || '', DIMENSIONS.cause.get(h), h.code, num('res', h.resH), num('res', h.ezeH), num('res', h.lostH), h.slaMet ? 'Yes' : 'No', h.fcr ? 'Yes' : 'No', h.transfers, qaScore(h)])))
     }
     // BOM so Excel opens accented names correctly.
@@ -572,6 +580,7 @@
 
   // ---------- Handlers ----------
   S.on({
+    'reports.live': (el) => S.set(S.ui('p:reports:live'), { mode: el.dataset.v }),
     'reports.mode': (el) => { const u = pageUi(); if (u.mode !== el.dataset.v) resetSections(); S.set(u, { mode: el.dataset.v }) },
     'reports.tab': (el) => { const u = pageUi(); if (u.tab !== el.dataset.v) resetSections(); S.set(u, { tab: el.dataset.v }) },
     'reports.days': (el) => S.set(S.ui('p:reports:perf'), { days: Number(el.dataset.v) }),

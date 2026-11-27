@@ -33,11 +33,14 @@
   // ---------- Team settings (D14) ----------
   // Seeded from QueueManager's tbl_GlobalSettings / tbl_Queues / tbl_Shifts (2026-11-12).
   const SETTINGS = [
-    { key: 'inc.sloHours', group: 'Targets', label: 'Regular INC: SLO', unit: 'hours untouched', type: 'num', def: 4 },
-    { key: 'inc.slaHours', group: 'Targets', label: 'Regular INC: SLA', unit: 'hours untouched', type: 'num', def: 4 },
-    { key: 'eers.sloHours', group: 'Targets', label: 'EERS: SLO', unit: 'hours untouched', type: 'num', def: 1 },
-    { key: 'eers.slaHours', group: 'Targets', label: 'EERS: SLA', unit: 'hours untouched', type: 'num', def: 8 },
-    { key: 'backlogHour', group: 'Targets', label: 'Backlog after', unit: 'a ticket untouched since before this time today (or a prior day) is backlog', type: 'time', def: '05:00' },
+    // SLA targets (team, 2026-11-24): regular INC 4 h, EERS 1 h, critical 30 min.
+    // Critical = priority 1 in the export; it beats EERS when a ticket is both.
+    { key: 'inc.sloHours', group: 'Targets', label: 'Regular INC: SLO', unit: 'hours', type: 'num', def: 4 },
+    { key: 'inc.slaHours', group: 'Targets', label: 'Regular INC: SLA', unit: 'hours', type: 'num', def: 4 },
+    { key: 'eers.sloHours', group: 'Targets', label: 'EERS: SLO', unit: 'hours', type: 'num', def: 1 },
+    { key: 'eers.slaHours', group: 'Targets', label: 'EERS: SLA', unit: 'hours', type: 'num', def: 1 },
+    { key: 'crit.sloHours', group: 'Targets', label: 'Critical (P1): SLO', unit: 'hours (0.5 = 30 minutes)', type: 'num', def: 0.5 },
+    { key: 'crit.slaHours', group: 'Targets', label: 'Critical (P1): SLA', unit: 'hours (0.5 = 30 minutes)', type: 'num', def: 0.5 },
     { key: 'early.start', group: 'Shifts', label: 'Early shift starts', type: 'time', def: '05:00' },
     { key: 'early.end', group: 'Shifts', label: 'Early shift ends', type: 'time', def: '14:00' },
     { key: 'late.start', group: 'Shifts', label: 'Late shift starts', type: 'time', def: '06:00' },
@@ -56,6 +59,30 @@
   const TZ_OPTIONS = [['local', "Same as this computer's clock"], ...Array.from({ length: 27 }, (_, i) => i - 12).flatMap((h) => (h === 5 ? [[String(h), 'UTC+5'], ['5.5', 'UTC+5:30']] : [[String(h), h === 0 ? 'UTC' : `UTC${h > 0 ? '+' : ''}${h}`]]))]
   const def = Object.fromEntries(SETTINGS.map((s) => [s.key, s.def]))
 
+  // ---------- Queues (Team settings) ----------
+  // Each ServiceNow export Scope loads belongs to a queue. The standard INC queue runs all
+  // day. 3-Strike queues are separate ServiceNow views, one per region, each worked in its
+  // own window (PHT) from the team's 3-Strike Monitoring Schedule (lead, 2026-11-24). Their
+  // tickets are handed out automatically when the window opens, until the cutoff; after the
+  // cutoff only the Proci or a lead hands out. A ticket handed out but not attempted by
+  // the end of the window is "Not finished in window". Times are edited here when daylight
+  // saving moves the regions' working hours.
+  const DEFAULT_QUEUES = [
+    { id: 'inc', kind: 'inc', name: 'Standard INC', view: '', start: '', end: '', cutoff: 0, active: true },
+    { id: 'strike-nam', kind: 'strike', name: 'NAM & LATAM', view: 'NAM - 3 Strike (2 Hours)', start: '06:00', end: '08:00', cutoff: 30, active: true },
+    { id: 'strike-apac-xin', kind: 'strike', name: 'APAC (excl. India)', view: 'APAC (Excluding India) - 3 Strike (2 Hours)', start: '08:00', end: '11:30', cutoff: 30, active: true },
+    { id: 'strike-apac', kind: 'strike', name: 'APAC (incl. India)', view: 'APAC - 3 Strike (2 Hours)', start: '11:30', end: '16:00', cutoff: 30, active: true },
+  ]
+  const TIME_RE = /^\d{2}:\d{2}$/
+  function cleanQueue(q) {
+    if (!q || typeof q !== 'object' || !/^[a-z0-9-]{2,40}$/.test(q.id || '')) return null
+    const kind = q.id === 'inc' ? 'inc' : 'strike'
+    const out = { id: q.id, kind, name: String(q.name || '').trim().slice(0, 60), view: String(q.view || '').trim().slice(0, 120), start: String(q.start || ''), end: String(q.end || ''), cutoff: Math.max(0, Number(q.cutoff) || 0), active: q.active !== false }
+    if (!out.name) return null
+    if (kind === 'strike' && !(TIME_RE.test(out.start) && TIME_RE.test(out.end) && out.start < out.end)) return null
+    return out
+  }
+
   // ---------- Fold ----------
   // Memoised on the loaded log: every render reads the same folded view.
   let memo = { events: null }
@@ -67,18 +94,24 @@
   // Strikes done: the higher of what Scope logged since the ticket went On Hold and
   // "Contact attempt N" in the ServiceNow short description (the team writes it there).
   const ATTEMPT_RE = /contact\s*attempt\s*#?\s*([123])/i
+  // Strikes done: the higher of the attempts Scope logged since the user was last reached
+  // and "Contact attempt N" in the ServiceNow short description.
   function strikeCount(t) {
     const m = ATTEMPT_RE.exec(t.short || '')
-    const logged = t.strike ? t.strike.logs.filter((x) => !x.reached).length : 0
+    const logs = (t.sk || []).map((w) => w.log).filter(Boolean).sort((a, b) => a.at - b.at)
+    let logged = 0
+    for (const l of logs) logged = l.reached ? 0 : logged + 1
     return Math.max(m ? Number(m[1]) : 0, logged)
   }
-  // Who approves the day's 3-Strike distribution: the day's Proci Backup (QM duty),
-  // Weekend Support at the weekend, or a lead.
-  function canApproveStrikes(soeid, day) {
+  // Who can hand out or move 3-Strike tickets by hand, at any time (also after the cutoff):
+  // the day's Main Proci, Proci Backup or Weekend Support, or a lead (lead, 2026-11-24).
+  function canOverrideStrikes(soeid, day) {
     if (isLead(soeid)) return true
     const r = S.rota && S.rota.dayRoles(day)
-    return !!r && (r.backup === soeid || r.weekend === soeid)
+    return !!r && (r.main === soeid || r.backup === soeid || r.weekend === soeid)
   }
+  const TIME_DAY_RE = /^\d{4}-\d{2}-\d{2}$/
+  const queueName = (queues, id) => ((queues.find((q) => q.id === id) || {}).name || id)
 
   function fold(events) {
     const undone = new Set(events.filter((ev) => ev.e && ev.e.type === 'importUndo').filter((ev) => {
@@ -87,6 +120,9 @@
     }).map((ev) => ev.e.importId))
     const settings = { ...def }
     const settingsLog = []
+    let queues = DEFAULT_QUEUES.map((q) => ({ ...q }))
+    const inQueue = new Map() // `${day}|${soeid}` -> { on, limit, by, at }
+    let queuesBy = null
     const presence = new Map() // `${day}|${soeid}` -> { soeid, duty, shift, at }
     const tickets = new Map()
     const imports = new Map()
@@ -94,21 +130,33 @@
       const e = ev.e || {}
       if (e.type === 'settingsSet' && isLead(ev.by) && e.values && typeof e.values === 'object') {
         for (const [k, v] of Object.entries(e.values)) if (k in def) { settingsLog.push({ key: k, from: settings[k], to: v, by: ev.by, at: ev.at }); settings[k] = v }
+      } else if (e.type === 'queueSet' && TIME_DAY_RE.test(e.day || '') && e.soeid && (isLead(ev.by) || canOverrideStrikes(ev.by, e.day))) {
+        // Team roster → In queue (lead, 2026-11-27): put someone in or out of today's hand-out
+        // whether or not they've signed in, with an optional ticket limit for the day.
+        const lim = Number(e.limit)
+        inQueue.set(`${e.day}|${e.soeid}`, { on: e.on === null || e.on === undefined ? null : !!e.on, limit: lim > 0 ? Math.floor(lim) : null, by: ev.by, at: ev.at })
+      } else if (e.type === 'queuesSet' && isLead(ev.by) && Array.isArray(e.queues)) {
+        const list = e.queues.map(cleanQueue).filter(Boolean)
+        if (list.some((q) => q.id === 'inc') && new Set(list.map((q) => q.id)).size === list.length) { queues = list; queuesBy = { by: ev.by, at: ev.at } }
       } else if (e.type === 'shiftStart' && e.day) {
         presence.set(`${e.day}|${ev.by}`, { soeid: ev.by, duty: e.duty, shift: e.shift, at: ev.at, day: e.day, edited: !!e.edited })
       } else if (e.type === 'ticketsImported' && !undone.has(e.importId) && Array.isArray(e.rows)) {
-        const imp = imports.get(e.importId) || { id: e.importId, by: ev.by, at: ev.at, file: e.file || '', total: e.total || 0, rows: 0, added: 0, updated: 0 }
+        // queue: which export this is (older loads have none: the standard INC queue).
+        const qid = /^[a-z0-9-]{2,40}$/.test(e.queue || '') ? e.queue : 'inc'
+        const strikeQ = qid !== 'inc'
+        const imp = imports.get(e.importId) || { id: e.importId, queue: qid, by: ev.by, at: ev.at, day: dayOf(ev.at), file: e.file || '', total: e.total || 0, rows: 0, added: 0, updated: 0, ns: [] }
         imports.set(e.importId, imp)
         for (const r of e.rows) {
           if (!r || !INC_RE.test(r.n)) continue
-          imp.rows++
-          const t = tickets.get(r.n)
+          imp.rows++; imp.ns.push(r.n)
+          let t = tickets.get(r.n)
           if (!t) {
-            tickets.set(r.n, { ...r, firstSeen: ev.at, importId: e.importId, lastImport: e.importId, to: null, assignedAt: null, reason: '', assignedBy: null, tag: 'Assigned', tagAt: null, tagBy: null, notes: [], history: [] })
+            t = { ...r, eers: strikeQ ? '' : r.eers, firstSeen: ev.at, incSeen: strikeQ ? null : ev.at, importId: e.importId, lastImport: strikeQ ? null : e.importId, to: null, assignedAt: null, reason: '', assignedBy: null, tag: 'Assigned', tagAt: null, tagBy: null, notes: [], history: [], opens: [], sk: [] }
+            tickets.set(r.n, t)
             imp.added++
           } else {
-            t.lastImport = e.importId
-            if ((r.updated || 0) > (t.updated || 0)) { Object.assign(t, r); imp.updated++ } else { t.eers = r.eers; t.sn = r.sn } // keywords may have changed
+            if ((r.updated || 0) > (t.updated || 0)) { const keep = t.eers; Object.assign(t, r); if (strikeQ) t.eers = keep; imp.updated++ } else if (!strikeQ) { t.eers = r.eers; t.sn = r.sn } // keywords may have changed
+            if (!strikeQ) { t.lastImport = e.importId; if (!t.incSeen) t.incSeen = ev.at }
           }
         }
       } else if (e.type === 'ticketsAssigned' && !undone.has(e.importId) && Array.isArray(e.list)) {
@@ -117,48 +165,63 @@
           const target = a && qm.roster.find((p) => p.soeid === a.to)
           if (!t || !target) continue
           if (t.to && !(e.override && qm.roster.some((p) => p.soeid === ev.by))) continue // first assignment wins; anyone on the roster can move a ticket (lead, 2026-11-19)
-          t.history.push({ what: t.to ? `moved from ${nameOf(t.to)} to ${target.name}` : `assigned to ${target.name}`, by: ev.by, at: ev.at, note: a.reason || '' })
+          t.history.push({ kind: 'assign', to: a.to, what: t.to ? `moved from ${nameOf(t.to)} to ${target.name}` : `assigned to ${target.name}`, by: ev.by, at: ev.at, note: a.reason || '' })
           Object.assign(t, { to: a.to, assignedAt: ev.at, reason: a.reason || '', assignedBy: ev.by })
         }
       } else if (e.type === 'ticketTag' && TAGS.includes(e.tag)) {
         const t = tickets.get(e.n)
         if (t && (ev.by === owner(t) || isLead(ev.by))) {
           const res = e.tag === 'Resolved' && e.res && typeof e.res === 'object' && /^[A-Z]{2,5}-[A-Z]{2,5}-\d{2,3}$/.test(e.res.code || '') ? { ...e.res, by: ev.by, at: ev.at } : null
-          t.history.push({ what: `tagged ${e.tag}${res ? ` with ${res.code}` : ''}`, by: ev.by, at: ev.at, note: '' })
+          t.history.push({ kind: 'tag', tag: e.tag, what: `tagged ${e.tag}${res ? ` with ${res.code}` : ''}`, by: ev.by, at: ev.at, note: '' })
           Object.assign(t, { tag: e.tag, tagAt: ev.at, tagBy: ev.by, res: e.tag === 'Resolved' ? res : null })
-          // On Hold starts (or restarts) the 3-Strike follow-up (vault: 3-Strike Process).
-          t.strike = e.tag === 'On Hold' ? { logs: [], to: null, day: null, by: null } : null
+          // On Hold: the ticket leaves this queue in ServiceNow for the user's regional
+          // 3-Strike queue, and comes back to Scope through that queue's export.
         }
-      } else if (e.type === 'strikeAssign' && e.day && Array.isArray(e.list) && canApproveStrikes(ev.by, e.day)) {
-        // The day's 3-Strike distribution, approved by the Proci Backup (QM), Weekend Support or a lead.
+      } else if (e.type === 'strikeAssign' && TIME_DAY_RE.test(e.day || '') && /^[a-z0-9-]{2,40}$/.test(e.queue || '') && Array.isArray(e.list)) {
+        // A 3-Strike window's tickets handed out: automatically by any browser while the
+        // window is open (first hand-out wins), or by the day's Proci or a lead at any time
+        // (override: moves a ticket, or hands out after the cutoff).
+        const over = !!e.override
+        if (over && !canOverrideStrikes(ev.by, e.day)) continue
+        if (!qm.roster.some((p) => p.soeid === ev.by)) continue
+        const key = `${e.day}|${e.queue}`
         for (const a of e.list) {
           const t = a && tickets.get(a.n)
-          if (!t || !t.strike || !qm.roster.some((p) => p.soeid === a.to)) continue
-          Object.assign(t.strike, { to: a.to, day: e.day, by: ev.by })
-          t.history.push({ what: `3-Strike for ${e.day} given to ${nameOf(a.to)}`, by: ev.by, at: ev.at, note: '' })
+          if (!t || !qm.roster.some((p) => p.soeid === a.to)) continue
+          const w = t.sk.find((x) => x.key === key)
+          if (w && (!over || w.log)) continue // first hand-out wins; an attempted one stays put
+          if (w) Object.assign(w, { to: a.to, at: ev.at, by: ev.by, reason: String(a.reason || ''), override: true })
+          else t.sk.push({ key, day: e.day, queue: e.queue, to: a.to, at: ev.at, by: ev.by, reason: String(a.reason || ''), override: over, log: null })
+          t.history.push({ what: `3-Strike ${e.day} (${queueName(queues, e.queue)}) ${w ? 'moved' : 'given'} to ${nameOf(a.to)}`, by: ev.by, at: ev.at, note: String(a.reason || '') })
         }
       } else if (e.type === 'strikeLog') {
-        // A contact attempt: reached = back to work with the owner; not reached = next
-        // strike; not reached on Strike 3 = Resolved (the user wasn't reached).
+        // A contact attempt on a handed-out 3-Strike ticket. Reached: logged, and the ticket
+        // carries on in ServiceNow. Not reached: the next strike. Not reached on Strike 3:
+        // Resolved (set it Resolved in ServiceNow too).
         const t = tickets.get(e.n)
-        if (!t || !t.strike || t.tag !== 'On Hold' || !(ev.by === t.strike.to || ev.by === owner(t) || isLead(ev.by))) continue
+        const w = t && t.sk.find((x) => x.key === e.key)
+        if (!w || w.log || !(ev.by === w.to || canOverrideStrikes(ev.by, w.day))) continue
         const n = strikeCount(t) + 1
-        t.strike.logs.push({ strike: n, reached: !!e.reached, by: ev.by, at: ev.at, day: dayOf(ev.at), note: String(e.note || '').trim() })
-        if (e.reached) {
-          t.history.push({ what: `reached the user on Strike ${n}; back to ${nameOf(owner(t))}`, by: ev.by, at: ev.at, note: '' })
-          Object.assign(t, { tag: 'Assigned', tagAt: ev.at, tagBy: ev.by, strike: null })
-        } else if (n >= 3) {
+        w.log = { strike: n, reached: !!e.reached, by: ev.by, at: ev.at }
+        if (e.reached) t.history.push({ what: `reached the user on Strike ${n}`, by: ev.by, at: ev.at, note: '' })
+        else if (n >= 3) {
           t.history.push({ what: 'Strike 3: user not reached, Resolved', by: ev.by, at: ev.at, note: '' })
           Object.assign(t, { tag: 'Resolved', tagAt: ev.at, tagBy: ev.by, res: null, strikeClosed: true })
-        } else {
-          t.history.push({ what: `Strike ${n}: user not reached`, by: ev.by, at: ev.at, note: '' })
-        }
+        } else t.history.push({ what: `Strike ${n}: user not reached`, by: ev.by, at: ev.at, note: '' })
+      } else if (e.type === 'ticketOpened') {
+        // Someone clicked the INC link to open the ticket in ServiceNow. Every click is kept;
+        // the history shows the first one per person after each assignment.
+        const t = tickets.get(e.n)
+        if (!t || !qm.roster.some((p) => p.soeid === ev.by)) continue
+        if (!t.opens.some((o) => o.by === ev.by && o.at >= (t.assignedAt || 0))) t.history.push({ kind: 'open', what: 'opened it in ServiceNow', by: ev.by, at: ev.at, note: '' })
+        t.opens.push({ by: ev.by, at: ev.at })
       } else if (e.type === 'ticketNote' && String(e.text || '').trim()) {
         const t = tickets.get(e.n)
         if (t) t.notes.push({ by: ev.by, at: ev.at, text: String(e.text).trim() })
       }
     }
-    const latest = [...imports.values()].pop() || null
+    // The INC queue is whatever the latest standard INC export holds.
+    const latest = [...imports.values()].filter((x) => x.queue === 'inc').pop() || null
     for (const t of tickets.values()) t.inLatest = !!latest && t.lastImport === latest.id
     // Resolution code library, built only from real resolutions (the first use of a code names it).
     const codes = new Map()
@@ -169,7 +232,7 @@
       c.uses++; c.tickets.push(t.n)
       codes.set(c.code, c)
     }
-    return { settings, settingsLog, presence, tickets: [...tickets.values()], imports: [...imports.values()], latest, undone, codes: [...codes.values()].sort((a, b) => a.code.localeCompare(b.code)) }
+    return { settings, settingsLog, queues, queuesBy, inQueue, presence, tickets: [...tickets.values()], ticketMap: tickets, imports: [...imports.values()], latest, undone, codes: [...codes.values()].sort((a, b) => a.code.localeCompare(b.code)) }
   }
   function view() {
     if (memo.events !== qm.events || memo.roster !== qm.roster) memo = { events: qm.events, roster: qm.roster, v: fold(qm.events || []) }
@@ -218,13 +281,35 @@
     if (!S.schedule) return []
     const day = dayOf(now)
     const signed = new Map([...view().presence.values()].filter((p) => p.day === day).map((p) => [p.soeid, p]))
-    return qm.roster.filter((p) => p.active !== false).map((person) => {
-      const pl = S.schedule.planFor(person.soeid, day)
-      const pr = signed.get(person.soeid)
-      const duty = pr && pr.edited ? pr.duty : pl.role || 'ANALYST'
-      return { soeid: person.soeid, person, duty, shift: pl.shift, w: { cutoff: Infinity }, ok: pl.shift && pl.shift !== 'OFF' && pl.role !== 'LEAVE' && pl.role !== 'REST' && duty !== 'LEAVE' }
-    }).filter((p) => p.ok).sort((a, b) => a.person.name.localeCompare(b.person.name))
+    return qm.roster.filter((p) => p.active !== false).map((person) => inQueueToday(person, day, signed))
+      .filter((p) => p.ok).sort((a, b) => a.person.name.localeCompare(b.person.name))
   }
+  // Is this person in today's hand-out? (Team roster → In queue, lead 2026-11-27.)
+  //  - On leave: never.
+  //  - Signed in today: always (automatic).
+  //  - Not signed in (late, for example): out, unless a lead or the day's Proci switches them
+  //    on in Team Management → Roster → In queue (lead, 2026-11-27; replaces "everyone
+  //    scheduled shares, signed in or not" of 2026-11-19). Switched on, they get their equal
+  //    share as if they were online.
+  // limit: the most tickets they get today (INC + 3-Strike handed out), or null.
+  function inQueueToday(person, day = dayOf(Date.now()), signed = null) {
+    const pl = S.schedule.planFor(person.soeid, day)
+    const pres = signed || new Map([...view().presence.values()].filter((p) => p.day === day).map((p) => [p.soeid, p]))
+    const pr = pres.get(person.soeid)
+    const duty = pr && pr.edited ? pr.duty : pl.role || 'ANALYST'
+    const leave = pl.role === 'LEAVE' || duty === 'LEAVE'
+    const scheduled = !!pl.shift && pl.shift !== 'OFF' && pl.role !== 'REST'
+    const set = view().inQueue.get(`${day}|${person.soeid}`) || null
+    const why = leave ? 'leave' : pr ? 'signed' : set && set.on != null ? 'toggle' : 'offline'
+    const ok = !leave && (!!pr || (!!set && set.on === true))
+    return { soeid: person.soeid, person, duty, shift: pl.shift, w: { cutoff: Infinity }, ok, why, scheduled, signedIn: !!pr, limit: set ? set.limit : null, set }
+  }
+  // Tickets given to someone today, for the limit: INC that became theirs + 3-Strike handed out.
+  function givenToday(soeid, now = Date.now(), tickets = view().tickets) {
+    const day = dayOf(now)
+    return loadToday(soeid, now, tickets).tickets + tickets.reduce((a, t) => a + (t.sk || []).filter((w) => w.day === day && w.to === soeid).length, 0)
+  }
+  const underLimit = (p, extra = 0, now = Date.now()) => !p.limit || givenToday(p.soeid, now) + extra < p.limit
   const startOfDay = (now) => { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime() }
   // What each person holds now: open tickets on them (Assigned or On Hold), whatever day
   // they got them. Distribution and rebalancing even THIS out (lead, 2026-11-19: "all
@@ -241,15 +326,33 @@
   }
 
   // ---------- Health ----------
+  // Which SLO/SLA a ticket is held to: critical (P1), else EERS, else regular INC.
+  function targets(t, s) {
+    const k = t.p === 1 ? 'crit' : t.eers ? 'eers' : 'inc'
+    return { kind: { crit: 'Critical', eers: 'EERS', inc: 'Regular INC' }[k], slo: Number(s[`${k}.sloHours`]) * HOUR, sla: Number(s[`${k}.slaHours`]) * HOUR }
+  }
   function health(t, s, now = Date.now()) {
-    const eers = !!t.eers
-    const slo = Number(eers ? s['eers.sloHours'] : s['inc.sloHours']) * HOUR
-    const sla = Number(eers ? s['eers.slaHours'] : s['inc.slaHours']) * HOUR
+    const { slo, sla } = targets(t, s)
     const untouched = now - (t.updated || t.opened || now)
-    const backlogFrom = at(now, s.backlogHour)
-    return { untouched, sloBreached: untouched > slo, slaBreached: untouched > sla, backlog: (t.updated || t.opened || now) < backlogFrom }
+    // Backlog (lead, 2026-11-24): created in ServiceNow before today's Early shift start, or
+    // on an earlier day. Follows the Early shift time in Team settings.
+    const created = t.created || t.opened || now
+    return { untouched, sloBreached: untouched > slo, slaBreached: untouched > sla, backlog: created < at(now, s['early.start']) }
   }
   const isOpen = (t) => t.inLatest && OPEN_TAGS.includes(t.tag)
+  // Total age counts from when the ticket was created in ServiceNow (sys_created_on, else
+  // opened_at). Queue age counts from when it came into our INC queue: the export has no
+  // "entered the group" date, so it's the first standard INC export Scope saw it in.
+  const createdAt = (t) => t.created || t.opened || null
+  const queuedAt = (t) => t.incSeen || t.firstSeen || null
+  // SLA status: queue age against the team's SLO/SLA targets (EERS has its own).
+  function queueHealth(t, s, now = Date.now()) {
+    const { slo, sla } = targets(t, s)
+    const q = queuedAt(t)
+    const end = isOpen(t) ? now : (t.tagAt || now)
+    const age = q ? Math.max(0, end - q) : 0
+    return { age, slo, sla, kind: targets(t, s).kind, sloBreached: age > slo, slaBreached: age > sla }
+  }
 
   // ---------- Automatic assignment (D15) ----------
   // Pure: given the folded tickets, who's scheduled today and the settings, decide who gets what.
@@ -263,7 +366,8 @@
       .sort((a, b) => (a.p || 9) - (b.p || 9) || (a.opened || 0) - (b.opened || 0))
     const regular = pool.filter((p) => (p.duty !== 'MAIN_PROCI' || settings['pool.mainProci'] !== false) && (p.duty !== 'PROCI_BACKUP' || settings['pool.backup'] !== false))
     const backups = pool.filter((p) => p.duty === 'PROCI_BACKUP')
-    const pick = (list) => list.slice().sort((a, b) => counts.get(a.soeid) - counts.get(b.soeid) || (last.get(a.soeid) || 0) - (last.get(b.soeid) || 0) || a.person.name.localeCompare(b.person.name))[0]
+    const extra = new Map() // given in this batch, for the daily limit
+    const pick = (list) => list.filter((p) => underLimit(p, extra.get(p.soeid) || 0, now)).sort((a, b) => counts.get(a.soeid) - counts.get(b.soeid) || (last.get(a.soeid) || 0) - (last.get(b.soeid) || 0) || a.person.name.localeCompare(b.person.name))[0]
     const out = []
     const left = []
     let i = 0
@@ -281,6 +385,7 @@
       if (t.sn) { const m = snMember(t); if (!m || m.soeid !== who.soeid) why += m ? `. In ServiceNow it's with ${m.name}: reassign it there` : '. In ServiceNow it\'s assigned to someone not on the active team: reassign it there' }
       out.push({ n: t.n, to: who.soeid, reason: why })
       counts.set(who.soeid, counts.get(who.soeid) + 1)
+      extra.set(who.soeid, (extra.get(who.soeid) || 0) + 1)
       last.set(who.soeid, ++i)
     }
     return { list: out, left, pool }
@@ -311,27 +416,29 @@
     const counts = new Map(pool.map((p) => [p.soeid, load(p.soeid)]))
     const backups = pool.filter((p) => p.duty === 'PROCI_BACKUP')
     const movable = tickets.filter((t) => t.inLatest && t.to && t.tag === 'Assigned' && (!untouchedOnly || (t.updated || 0) <= (t.assignedAt || 0)))
-    const least = (list) => list.slice().sort((a, b) => counts.get(a.soeid) - counts.get(b.soeid) || a.person.name.localeCompare(b.person.name))[0]
+    const got = new Map()
+    const open = (p) => underLimit(p, got.get(p.soeid) || 0, now)
+    const least = (list) => list.filter(open).sort((a, b) => counts.get(a.soeid) - counts.get(b.soeid) || a.person.name.localeCompare(b.person.name))[0]
     const moves = []
     for (const t of movable.filter((x) => !inPool.has(x.to))) {
       const who = least(t.eers && backups.length ? backups : pool)
       if (!who) break
       moves.push({ n: t.n, from: t.to, to: who.soeid, reason: `Rebalanced: ${nameOf(t.to)} no longer gets tickets; ${who.person.name} had the fewest open (${counts.get(who.soeid)})` })
-      counts.set(who.soeid, counts.get(who.soeid) + 1)
+      counts.set(who.soeid, counts.get(who.soeid) + 1); got.set(who.soeid, (got.get(who.soeid) || 0) + 1)
     }
     const moved = new Set(moves.map((m) => m.n))
     const stuck = new Set() // people with nothing left that can move
     for (let guard = 0; guard < 500 && pool.length > 1; guard++) {
       const sorted = pool.slice().sort((a, b) => counts.get(b.soeid) - counts.get(a.soeid) || a.person.name.localeCompare(b.person.name))
       const hi = sorted.find((p) => !stuck.has(p.soeid))
-      const lo = sorted[sorted.length - 1]
-      if (!hi || hi === lo || counts.get(hi.soeid) - counts.get(lo.soeid) <= 1) break
+      const lo = sorted.filter(open).pop()
+      if (!hi || !lo || hi === lo || counts.get(hi.soeid) - counts.get(lo.soeid) <= 1) break
       const t = movable.filter((x) => x.to === hi.soeid && !moved.has(x.n) && !x.eers).sort((a, b) => (b.p || 9) - (a.p || 9) || b.assignedAt - a.assignedAt)[0]
       if (!t) { stuck.add(hi.soeid); continue } // nothing of theirs can move; look at the next person
       moves.push({ n: t.n, from: hi.soeid, to: lo.soeid, reason: `Rebalanced: ${hi.person.name} had ${counts.get(hi.soeid)} open, ${lo.person.name} ${counts.get(lo.soeid)}` })
       moved.add(t.n)
       counts.set(hi.soeid, counts.get(hi.soeid) - 1)
-      counts.set(lo.soeid, counts.get(lo.soeid) + 1)
+      counts.set(lo.soeid, counts.get(lo.soeid) + 1); got.set(lo.soeid, (got.get(lo.soeid) || 0) + 1)
     }
     return { moves, pool }
   }
@@ -359,7 +466,7 @@
     if (!waiting.length) return null
     if (v.settings.autoHandout === false || v.settings.autoHandout === 'false') return 'Automatic hand-out is off in Team settings. Use Hand out in Team queue.'
     const on = scheduledToday(now)
-    if (!on.length) return 'Nobody is scheduled to work today. Set shifts in Team Management → Schedule & coverage.'
+    if (!on.length) return 'Nobody is in today\'s queue yet: people join when they sign in, or a lead switches them on in Team Management → Roster → In queue.'
     if (!plan({ tickets: v.tickets, people: on, settings: v.settings, now, load: (s) => openLoad(s, v.tickets) }).list.length) return 'Nobody scheduled today takes these tickets: check "Main Proci gets regular tickets" and "Proci Backup gets regular tickets too" in Team settings.'
     return 'Handing them out now…'
   }
@@ -391,6 +498,25 @@
     run.finally(() => { autoBusy = false })
   })
 
+
+  // ---------- A new export loaded: tell everyone (lead, 2026-11-27) ----------
+  // Every open browser except the one that loaded it shows who loaded it, how many tickets
+  // were shared out and how many are theirs. (Each ticket of theirs also rings below.)
+  let lastLoadSeen = null
+  S.after(() => {
+    const me = qm.me()
+    if (!me || !qm.loadedAt) return
+    const L = view().latest
+    if (!L) return
+    if (lastLoadSeen === null) { lastLoadSeen = L.id; return }
+    if (L.id === lastLoadSeen) return
+    lastLoadSeen = L.id
+    if (L.by === me.soeid) return
+    setTimeout(() => {
+      const mine = view().tickets.filter((t) => t.to === me.soeid && t.assignedAt >= L.at && t.assignedAt < L.at + 5 * 60e3).length
+      S.dispatch({ type: 'toast', text: `${nameOf(L.by).split(' ')[0]} loaded the ServiceNow export: ${L.added} new ticket${L.added === 1 ? '' : 's'}${mine ? ` · ${mine} for you` : ''}` })
+    }, 2500)
+  })
 
   // ---------- "Assigned to you": toast + sound ----------
   // When a ticket becomes mine (automatic hand-out, a rebalance or someone moving it to me),
@@ -459,9 +585,11 @@
     short: ['short_description', 'short description'], desc: ['description'], state: ['state'],
     group: ['assignment_group', 'assignment group'], sn: ['assigned_to', 'assigned to'],
     createdBy: ['sys_created_by', 'created by'], location: ['location'],
+    created: ['sys_created_on', 'created'], // optional: when the ticket was created (else opened_at)
     sysId: ['sys_id'], // optional: when the export includes it, the link opens the exact record
   }
   const REQUIRED = ['n', 'opened', 'updated', 'short', 'state', 'group', 'sn']
+  const REQUIRED_STRIKE = ['n', 'opened', 'updated', 'short'] // the 3-Strike views' columns aren't confirmed yet
   const clean = (s) => String(s || '').replace(/<br\s*\/?>/gi, ' ').replace(/&gt;/g, '>').replace(/&lt;/g, '<').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\\\|/g, '|').replace(/\s+/g, ' ').trim()
   // "2026-11-11 09:26" or "2026-11-11 09:26:05", read in the export's time zone.
   function parseWhen(s, tz) {
@@ -479,12 +607,12 @@
     }
     return ''
   }
-  function normalise(table, settings) {
+  function normalise(table, settings, strike = false) {
     const head = table[0].map((h) => h.trim().toLowerCase())
     const idx = {}
     for (const [k, names] of Object.entries(COLS)) idx[k] = head.findIndex((h) => names.includes(h))
-    const missing = REQUIRED.filter((k) => idx[k] < 0).map((k) => COLS[k][0])
-    if (missing.length) return { error: `This doesn't look like the ServiceNow incident export: no ${missing.join(', ')} column.` }
+    const missing = (strike ? REQUIRED_STRIKE : REQUIRED).filter((k) => idx[k] < 0).map((k) => COLS[k][0])
+    if (missing.length) return { error: `This doesn't look like a ServiceNow incident export: no ${missing.join(', ')} column.` }
     const byN = new Map(); const skipped = []
     table.slice(1).forEach((r, i) => {
       const get = (k) => (idx[k] >= 0 ? r[idx[k]] || '' : '')
@@ -494,9 +622,10 @@
       const updated = parseWhen(get('updated'), settings.exportTz)
       if (opened == null || updated == null) { skipped.push({ line: i + 2, why: `${n}: unreadable opened or updated date` }); return }
       const short = clean(get('short')).slice(0, 300)
+      const created = parseWhen(get('created'), settings.exportTz)
       const priority = clean(get('priority')).slice(0, 40)
       const row = {
-        n, opened, updated, short, priority, p: Number((priority.match(/^\d/) || [9])[0]),
+        n, opened, ...(created != null && { created }), updated, short, priority, p: Number((priority.match(/^\d/) || [9])[0]),
         state: clean(get('state')).slice(0, 40), group: clean(get('group')).slice(0, 120), sn: clean(get('sn')).slice(0, 120),
         createdBy: clean(get('createdBy')).slice(0, 40), location: clean(get('location')).slice(0, 120),
         ...(/^[0-9a-f]{32}$/i.test(get('sysId').trim()) && { sysId: get('sysId').trim().toLowerCase() }),
@@ -513,14 +642,18 @@
     if (!/\.csv$/i.test(file.name)) { S.set(u, { error: `${file.name} isn't a .csv file. Export the incident list as CSV.`, preview: null }); return }
     S.set(u, { busy: true, error: null, preview: null })
     const { text, enc } = await readText(file)
-    const out = normalise(parseCsv(text), view().settings)
+    const table = parseCsv(text)
+    const qid = impQueue(table)
+    const strike = qid !== 'inc'
+    const out = normalise(table, view().settings, strike)
     if (out.error) { S.set(u, { busy: false, error: out.error }); return }
+    u.file = file
     const known = new Map(view().tickets.map((t) => [t.n, t]))
     const fresh = out.rows.filter((r) => !known.has(r.n))
     const newer = out.rows.filter((r) => known.has(r.n) && r.updated > (known.get(r.n).updated || 0))
     const inFile = new Set(out.rows.map((r) => r.n))
-    const gone = view().tickets.filter((t) => t.inLatest && !inFile.has(t.n))
-    S.set(u, { busy: false, preview: { file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn).length } })
+    const gone = strike ? [] : view().tickets.filter((t) => t.inLatest && !inFile.has(t.n))
+    S.set(u, { busy: false, preview: { queue: qid, file: file.name, enc, rows: out.rows, skipped: out.skipped, dupes: out.dupes, fresh: fresh.length, newer: newer.length, same: out.rows.length - fresh.length - newer.length, gone: gone.length, eers: out.rows.filter((r) => r.eers).length, snAssigned: out.rows.filter((r) => r.sn).length } })
   }
   async function confirmImport() {
     const u = imp()
@@ -530,27 +663,69 @@
     const importId = uid('imp')
     const parts = Math.max(1, Math.ceil(pv.rows.length / CHUNK))
     for (let k = 0; k < parts; k++) {
-      const ok = await qm.send({ type: 'ticketsImported', importId, file: pv.file, total: pv.rows.length, part: k + 1, parts, rows: pv.rows.slice(k * CHUNK, (k + 1) * CHUNK) })
+      const ok = await qm.send({ type: 'ticketsImported', importId, queue: pv.queue, file: pv.file, total: pv.rows.length, part: k + 1, parts, rows: pv.rows.slice(k * CHUNK, (k + 1) * CHUNK) })
       if (!ok) { S.set(u, { busy: false }); return }
     }
+    if (pv.queue !== 'inc') {
+      // 3-Strike: handed out when its window is open (S.strike does it after the render).
+      const q = view().queues.find((x) => x.id === pv.queue)
+      S.set(u, { busy: false, preview: null, queue: null, file: null, last: { importId, rows: pv.rows.length, strike: q ? q.name : pv.queue } })
+      S.dispatch({ type: 'toast', text: `${pv.rows.length} 3-Strike tickets loaded (${q ? q.name : pv.queue})` })
+      return
+    }
     const p = await handOut(importId)
-    S.set(u, { busy: false, preview: null, last: { importId, rows: pv.rows.length, assigned: p.list.length, left: p.left.length, pool: p.pool.length } })
+    S.set(u, { busy: false, preview: null, queue: null, file: null, last: { importId, rows: pv.rows.length, assigned: p.list.length, left: p.left.length, pool: p.pool.length } })
     S.dispatch({ type: 'toast', text: `${pv.rows.length} tickets loaded · ${p.list.length} handed out` })
   }
 
+  const strikeCutoff = (q) => { const m = minutes(q.end) - (Number(q.cutoff) || 0); return `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}` }
+
   // ---------- UI helpers ----------
-  const imp = () => S.ui('p:qm:import', { open: false, busy: false, error: null, preview: null, last: null, drag: false })
+  const imp = () => S.ui('p:qm:import', { open: false, busy: false, error: null, preview: null, last: null, drag: false, queue: null })
+  // Which queue a file is for. The window stays the original one (no question up front):
+  // a 3-Strike export is recognised by its rows (nearly all On Hold), and goes to the
+  // 3-Strike window that's on now (else the next one today, else the last). The preview
+  // shows "Read as …" with a dropdown to change it.
+  function impQueue(table) {
+    const qs = view().queues.filter((q) => q.active)
+    const picked = imp().queue
+    if (picked && qs.some((q) => q.id === picked)) return picked
+    const head = (table && table[0] || []).map((h) => h.trim().toLowerCase())
+    const si = head.findIndex((h) => COLS.state.includes(h))
+    const rows = table ? table.slice(1).filter((r) => r.some((c) => c && c.trim())) : []
+    const held = si < 0 ? 0 : rows.filter((r) => /on hold/i.test(r[si] || '')).length
+    if (!rows.length || held / rows.length < 0.8) return 'inc'
+    const strikes = qs.filter((q) => q.kind === 'strike')
+    const now = Date.now()
+    const q = strikes.find((x) => now >= at(now, x.start) && now < at(now, x.end)) || strikes.find((x) => now < at(now, x.start)) || strikes[strikes.length - 1]
+    return q ? q.id : 'inc'
+  }
   const fmtWhen = (ms) => (ms ? new Date(ms).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }) : '—')
   const fmtAgo = (ms) => { const m = Math.round(ms / 60e3); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.floor(m / 1440)} days` }
   const ageShort = (ms) => { const m = Math.max(0, Math.round(ms / 60e3)); return m < 60 ? `${m} min` : m < 48 * 60 ? `${Math.floor(m / 60)} h` : `${Math.floor(m / 1440)} d` }
   const fmtShort = (ms) => (startOfDay(ms) === startOfDay(Date.now()) ? new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : new Date(ms).toLocaleString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }))
   const tagPill = (tag) => html`<span class="${cls('pill', TAG_TONE[tag])}">${tag}</span>`
+  const fmtHm = (ms) => { const m = Math.max(0, Math.round(ms / 60e3)); const p2 = (x) => String(x).padStart(2, '0'); return m < 60 ? `${m}m` : m < 1440 ? `${Math.floor(m / 60)}h ${p2(m % 60)}m` : `${Math.floor(m / 1440)}d ${p2(Math.floor(m / 60) % 24)}h ${p2(m % 60)}m` }
+  // The time in our queue, colored against the goal (lead, 2026-11-24): red once it's past the
+  // SLA target (4 h for regular INC, EERS its own), green while it's still within it.
+  function slaPill(t, s) {
+    const h = queueHealth(t, s)
+    const tip = `In our queue since ${fmtWhen(queuedAt(t))}. ${h.kind} goal: within ${fmtHm(h.sla)}. ${h.slaBreached ? 'Past the goal.' : 'Within the goal.'}`
+    return html`<span class="${cls('sla-time nowrap', h.slaBreached ? 'over' : 'within')}" title="${tip}">${fmtHm(h.age)}</span>`
+  }
   function healthPills(t, s) {
     const h = health(t, s)
     return html`<span class="row tight nowrap">
       ${h.slaBreached ? html`<span class="pill crit" title="Untouched longer than the SLA">SLA</span>` : h.sloBreached ? html`<span class="pill warn" title="Untouched longer than the SLO">SLO</span>` : html`<span class="pill good">OK</span>`}
-      ${h.backlog && html`<span class="pill" title="Untouched since before ${s.backlogHour} today">Backlog</span>`}
+      ${h.backlog && html`<span class="pill" title="${backlogTip(s)}">Backlog</span>`}
       <span class="muted small">${fmtAgo(h.untouched)}</span></span>`
+  }
+  // Untouched time (since ServiceNow's last update) and the backlog flag; the SLA pill lives
+  // in the SLA status column on My tickets.
+  const backlogTip = (s) => `Backlog: created in ServiceNow before ${s['early.start']} today (the Early shift start) or on an earlier day`
+  function untouchedCell(t, s) {
+    const h = health(t, s)
+    return html`<span class="row tight nowrap">${h.backlog && html`<span class="pill" title="${backlogTip(s)}">Backlog</span>`}<span class="muted small" title="Since ServiceNow last updated it: ${fmtWhen(t.updated)}">${fmtAgo(h.untouched)}</span></span>`
   }
   // The INC number links to the ticket in ServiceNow once a lead sets the ServiceNow address
   // in Team settings (the export has no link of its own). With sys_id in the export the
@@ -563,7 +738,7 @@
   // INC number for tables: a link to ServiceNow, or (no address set) the button that opens the drawer.
   const incLink = (n, sysId, { open = 'queue.open', v = n } = {}) => {
     const href = snowHref(n, sysId)
-    return href ? html`<a class="inc-link mono" href="${href}" target="_blank" rel="noopener noreferrer" title="Open ${n} in ServiceNow">${n}${icon('external', 12)}</a>`
+    return href ? html`<a class="inc-link mono" href="${href}" target="_blank" rel="noopener noreferrer" title="Open ${n} in ServiceNow" data-click="queue.snOpen" data-v="${n}">${n}${icon('external', 12)}</a>`
       : html`<button class="btn ghost sm mono" data-click="${open}" data-v="${v}">${n}</button>`
   }
   // With the link on the number, the description (or a small button) opens Scope's drawer.
@@ -614,8 +789,8 @@
         <td class="nowrap">${t.p ? html`<span class="${cls('prio', `P${t.p}`)}" title="${t.priority}">P${t.p}</span>` : t.priority}</td>
         <td class="tq-queue">${t.eers ? eersPill(t) : html`<span class="small ink2" title="${t.group}">${t.group || '—'}</span>`}</td>
         <td>${t.inLatest && OPEN_TAGS.includes(t.tag) && qm.me() ? ownerPick(t) : html`<div>${ownerCell(t)}</div>`}</td>
-        <td class="nowrap small" title="Since the ticket was opened: ${fmtWhen(t.opened)}">${t.opened ? ageShort(now - t.opened) : '—'}</td>
-        <td class="nowrap small" title="Since it first came into the queue (Scope's first export with it): ${fmtWhen(t.firstSeen)}">${t.firstSeen ? ageShort(now - t.firstSeen) : '—'}</td>
+        <td class="nowrap small" title="Since the ticket was created: ${fmtWhen(createdAt(t))}">${createdAt(t) ? ageShort(now - createdAt(t)) : '—'}</td>
+        <td class="nowrap small" title="Since it came into our INC queue (Scope's first export with it): ${fmtWhen(queuedAt(t))}">${queuedAt(t) ? ageShort(now - queuedAt(t)) : '—'}</td>
         <td class="nowrap small">${t.to ? html`<span title="${fmtWhen(t.assignedAt)}">${fmtShort(t.assignedAt)}</span>` : '—'}</td>
         <td class="tq-tag"><span class="row tight" style="flex-wrap:nowrap">${t.inLatest ? tagPill(t.tag) : html`<span class="pill" title="Not in the latest export: closed or moved to another group in ServiceNow">Left the queue</span>`}
           ${t.inLatest && OPEN_TAGS.includes(t.tag) && healthPills(t, s)}</span></td>
@@ -633,16 +808,22 @@
       <thead><tr><th>Ticket #</th><th>Priority</th><th>Queue</th><th>Owner</th><th>Total age</th><th>Queue age</th><th>Assigned at</th><th>Tag</th></tr></thead>
       <tbody>${body}</tbody></table></div>`
     }
+    // My tickets: the ticket number and its description in one column, when it was given to
+    // me, the SLA status (age in our queue), total age (since created) and untouched time.
+    const now = Date.now()
     return html`<div class="tbl-wrap tbl-scroll"><table class="tbl qm-tbl">
-      <thead><tr><th>INC</th><th>Short description</th><th>Priority</th>${!mine && html`<th>Owner</th>`}<th>${mine ? 'Status' : 'Tag'}</th><th>Untouched</th><th>ServiceNow state</th></tr></thead>
+      <thead><tr><th>Ticket</th><th>Priority</th>${!mine && html`<th>Owner</th>`}<th>${mine ? 'Status' : 'Tag'}</th><th>Assigned at</th><th>SLA status</th><th>Total age</th><th>Untouched</th><th>ServiceNow state</th></tr></thead>
       <tbody>${list.map((t) => html`<tr data-key="${t.n}" class="${cls(sel === t.n && 'sel', !t.inLatest && 'muted')}">
-        <td class="nowrap"><span class="row tight" style="flex-wrap:nowrap">${incLink(t.n, t.sysId)}${detailsBtn(t.n, t.sysId)}${eersPill(t)}</span></td>
-        <td class="qm-clip" title="${t.short}">${t.short || html`<span class="muted">(no short description)</span>`}</td>
+        <td class="qm-tcell"><span class="row tight" style="flex-wrap:nowrap">${incLink(t.n, t.sysId)}${eersPill(t)}</span>
+          <button class="small ink2 qm-tdesc link-plain" data-click="queue.open" data-v="${t.n}" title="${t.short} (details in Scope)">${t.short || html`<span class="muted">(no short description)</span>`}</button></td>
         <td class="nowrap">${t.priority}</td>
         ${!mine && html`<td class="nowrap">${ownerCell(t)}</td>`}
         <td class="nowrap">${mine && t.inLatest ? html`<select class="${cls('in sm tag-sel', TAG_TONE[t.tag])}" aria-label="Status of ${t.n}" data-change="queue.tagSel" data-v="${t.n}">${TAGS.map((g) => html`<option value="${g}" ${attrs({ selected: t.tag === g })}>${g === 'Resolved' ? 'Resolved…' : g}</option>`)}</select>`
           : !t.inLatest ? html`<span class="pill" title="Not in the latest export: closed or moved to another group in ServiceNow">Left the queue</span>` : tagPill(t.tag)}${t.res && html` <span class="code-chip" title="${t.res.title}">${t.res.code}</span>`}</td>
-        <td>${t.inLatest && OPEN_TAGS.includes(t.tag) ? healthPills(t, s) : html`<span class="muted small">—</span>`}</td>
+        <td class="nowrap small">${t.assignedAt ? html`<span title="${fmtWhen(t.assignedAt)}">${fmtShort(t.assignedAt)}</span>` : '—'}</td>
+        <td>${queuedAt(t) ? slaPill(t, s) : html`<span class="muted small">—</span>`}</td>
+        <td class="nowrap small" title="Since the ticket was created: ${fmtWhen(createdAt(t))}">${createdAt(t) ? fmtHm(now - createdAt(t)) : '—'}</td>
+        <td>${t.inLatest && OPEN_TAGS.includes(t.tag) ? untouchedCell(t, s) : html`<span class="muted small">—</span>`}</td>
         <td class="nowrap small">${t.state}</td>
       </tr>`)}</tbody></table></div>`
   }
@@ -655,7 +836,7 @@
     S.drawer({
       className: 'qm-drawer',
       onClose: 'queue.close',
-      title: html`<span class="row tight">${tagPill(t.tag)}${eersPill(t)}</span><h2 class="drawer-title mono">${snowHref(t.n, t.sysId) ? html`<a class="inc-link" href="${snowHref(t.n, t.sysId)}" target="_blank" rel="noopener noreferrer" title="Open ${t.n} in ServiceNow">${t.n}${icon('external', 16)}</a>` : t.n}</h2>`,
+      title: html`<span class="row tight">${tagPill(t.tag)}${eersPill(t)}</span><h2 class="drawer-title mono">${snowHref(t.n, t.sysId) ? html`<a class="inc-link" href="${snowHref(t.n, t.sysId)}" target="_blank" rel="noopener noreferrer" title="Open ${t.n} in ServiceNow" data-click="queue.snOpen" data-v="${t.n}">${t.n}${icon('external', 16)}</a>` : t.n}</h2>`,
       sub: html`<span class="muted small">${t.short}</span>`,
       body: html`<div class="stack" style="gap:16px">
         <dl class="qm-dl">
@@ -725,19 +906,22 @@
       ${u.busy && html`<div class="muted small">Working…</div>`}
       ${u.error && html`<div class="callout crit">${icon('alert', 16)}<span>${u.error}</span></div>`}
       ${pv && html`<div class="stack" style="gap:10px">
-        <div class="row"><b>${pv.file}</b><span class="muted small">${pv.rows.length} tickets · read as ${pv.enc}</span></div>
-        <div class="grid g-kpi">
+        <div class="row"><b>${pv.file}</b><span class="muted small">${pv.rows.length} tickets · read as ${pv.enc}</span><span class="spacer"></span>
+          <label class="row tight small muted">Read as <select class="in sm" data-change="queue.impQueue" aria-label="Which export this is">${v.queues.filter((x) => x.active).map((x) => html`<option value="${x.id}" ${attrs({ selected: x.id === pv.queue })}>${x.kind === 'strike' ? `3-Strike · ${x.name} (${x.start}–${x.end})` : x.name}</option>`)}</select></label></div>
+        ${pv.queue !== 'inc' ? html`<div class="callout accent small">${icon('clock', 16)}<span><b>${pv.rows.length} tickets for 3-Strike · ${(v.queues.find((x) => x.id === pv.queue) || {}).name || pv.queue}.</b> ${pv.fresh} not seen before in Scope.</span></div>` : html`<div class="grid g-kpi">
           ${S.kpi({ label: 'New', icon: 'plus', tone: 'good', value: pv.fresh, foot: 'Not seen before' })}
           ${S.kpi({ label: 'Updated', icon: 'refresh', tone: 'sky', value: pv.newer, foot: 'Newer in ServiceNow' })}
           ${S.kpi({ label: 'EERS', icon: 'key', tone: 'navy', value: pv.eers, foot: 'Go to the Proci Backup' })}
           ${S.kpi({ label: 'Left the queue', icon: 'swap', tone: 'warn', value: pv.gone, foot: 'Open before, not in this file' })}
         </div>
-        <div class="muted small">${pv.same} unchanged · ${pv.snAssigned} with an 'assigned to' in ServiceNow (shared out like the rest)${pv.dupes > 0 && ` · ${pv.dupes} repeated rows merged`}</div>
+        <div class="muted small">${pv.same} unchanged · ${pv.snAssigned} with an 'assigned to' in ServiceNow (shared out like the rest)${pv.dupes > 0 && ` · ${pv.dupes} repeated rows merged`}</div>`}
         ${pv.skipped.length > 0 && html`<details class="small"><summary>${pv.skipped.length} rows skipped</summary><ul>${pv.skipped.slice(0, 20).map((x) => html`<li>Line ${x.line}: ${x.why}</li>`)}</ul></details>`}
         <div class="row"><span class="spacer"></span><button class="btn ghost" data-click="queue.cancel">Cancel</button>
           <button class="btn primary" data-click="queue.confirm" ${attrs({ disabled: u.busy || !pv.rows.length })}>${icon('check', 15)}Load and hand out</button></div>
       </div>`}
-      ${u.last && !pv && html`<div class="callout good">${icon('check', 16)}<span>Loaded ${u.last.rows} tickets. Handed out ${u.last.assigned} to ${u.last.pool} on shift.${u.last.left > 0 && html` <b>${u.last.left} left unassigned</b>: nobody on shift before their cutoff.`}</span>
+      ${u.last && !pv && u.last.strike && html`<div class="callout good">${icon('check', 16)}<span>Loaded ${u.last.rows} tickets into 3-Strike · ${u.last.strike}. They're handed out while the window is open; see Home → 3-Strike.</span>
+        ${canUndo(v.imports.find((x) => x.id === u.last.importId)) && html`<span class="spacer"></span><button class="btn sm" data-click="queue.undo" data-v="${u.last.importId}">Undo this load</button>`}</div>`}
+      ${u.last && !pv && !u.last.strike && html`<div class="callout good">${icon('check', 16)}<span>Loaded ${u.last.rows} tickets. Handed out ${u.last.assigned} to ${u.last.pool} on shift.${u.last.left > 0 && html` <b>${u.last.left} left unassigned</b>: nobody on shift before their cutoff.`}</span>
         ${canUndo(v.imports.find((x) => x.id === u.last.importId)) && html`<span class="spacer"></span><button class="btn sm" data-click="queue.undo" data-v="${u.last.importId}">Undo this load</button>`}</div>`}
     </div>`
   }
@@ -823,7 +1007,7 @@
     return html`<div>
         <div class="card-h qm-toolbar">
           <div class="kb-search tq-search">${icon('search', 16)}<input type="search" placeholder="Search INC, description, group, owner" value="${u.q}" data-input="queue.q" aria-label="Search tickets"></div>
-          <select class="in" aria-label="Show" data-change="queue.qshow" title="All: every open ticket · Assigned: being worked (not On Hold) · Backlog: untouched since before ${v.settings.backlogHour} · Priority: P1 and P2 · SLO breach: untouched longer than the SLO">
+          <select class="in" aria-label="Show" data-change="queue.qshow" title="All: every open ticket · Assigned: being worked (not On Hold) · Backlog: created before ${v.settings['early.start']} today (Early shift start) or earlier · Priority: P1 and P2 · SLO breach: untouched longer than the SLO">
             ${[['all', 'All'], ['assigned', 'Assigned'], ['backlog', 'Backlog'], ['priority', 'Priority'], ['slo', 'SLO Breach']].map(([k, l]) => html`<option value="${k}" ${attrs({ selected: u.show === k })}>${l}</option>`)}
           </select>
           <label class="row tight small nowrap tq-by"><input type="checkbox" data-change="queue.byAnalyst" ${attrs({ checked: !!u.byAnalyst })}>View by analyst</label>
@@ -856,6 +1040,7 @@
       ${lead && html`<div class="row"><span class="muted small">${dirty.length ? `${dirty.length} unsaved change${dirty.length > 1 ? 's' : ''}` : 'No changes'}</span><span class="spacer"></span>
         <button class="btn ghost" data-click="queue.setReset" ${attrs({ disabled: !dirty.length })}>Discard</button>
         <button class="btn primary" data-click="queue.setSave" ${attrs({ disabled: !dirty.length })}>${icon('check', 15)}Save for the team</button></div>`}
+      ${queuesCard(lead)}
       <div class="card"><div class="card-h"><b>Change history</b></div>
         ${v.settingsLog.length ? html`<div class="tbl-wrap"><table class="tbl"><thead><tr><th>When</th><th>Who</th><th>Setting</th><th>From</th><th>To</th></tr></thead>
           <tbody>${v.settingsLog.slice().reverse().slice(0, 50).map((x, i) => html`<tr data-key="${i}"><td class="nowrap">${fmtWhen(x.at)}</td><td>${nameOf(x.by)}</td><td>${(SETTINGS.find((s) => s.key === x.key) || {}).label}</td><td>${String(x.from)}</td><td><b>${String(x.to)}</b></td></tr>`)}</tbody></table></div>`
@@ -863,6 +1048,56 @@
       </div>
     </div>`
   }
+  // ---------- Queues card ----------
+  const qDraft = () => { const u = S.ui('p:team:queues', { draft: null, tried: false }); return (u.draft || view().queues).map((q) => ({ ...q })) }
+  function queueErr(q, list, i) {
+    if (!String(q.name || '').trim()) return 'Give it a name.'
+    if (list.some((x, j) => j !== i && x.name.trim().toLowerCase() === q.name.trim().toLowerCase())) return 'Two queues have this name.'
+    if (q.kind === 'inc') return null
+    if (!TIME_RE.test(q.start || '') || !TIME_RE.test(q.end || '')) return 'Set the window, HH:MM to HH:MM.'
+    if (q.start >= q.end) return 'The window must end after it starts (same day).'
+    if (q.cutoff === '' || isNaN(Number(q.cutoff)) || Number(q.cutoff) < 0) return 'Cutoff: minutes, 0 or more.'
+    if (minutes(q.end) - Number(q.cutoff) < minutes(q.start)) return 'The cutoff falls before the window opens.'
+    return null
+  }
+  function queuesCard(lead) {
+    const v = view()
+    const u = S.ui('p:team:queues', { draft: null, tried: false })
+    const list = u.draft || v.queues
+    const dirty = !!u.draft && JSON.stringify(u.draft) !== JSON.stringify(v.queues)
+    const dis = attrs({ disabled: !lead })
+    const strikeQs = list.map((q, i) => ({ q, i })).filter((x) => x.q.kind === 'strike')
+    const overlap = strikeQs.some((a) => strikeQs.some((b) => a.i < b.i && a.q.active && b.q.active && a.q.start < b.q.end && b.q.start < a.q.end))
+    return html`<div class="card">
+      <div class="card-h"><b>Queues</b><span class="spacer"></span>
+        ${S.infoTip('queues', 'Queues', html`
+          <span>Each ServiceNow export you load belongs to a queue. <b>Standard INC</b> runs all day. Each <b>3-Strike</b> queue is one regional ServiceNow view, worked in its own window (Philippine time).</span>
+          <span><b>When the window opens</b>, its 3-Strike tickets are handed out automatically to everyone scheduled today, to whoever has the fewest tickets today (INC + 3-Strike), so the totals stay even.</span>
+          <span><b>Cutoff:</b> automatic hand-out stops this many minutes before the window ends. After that the day's Main Proci, Proci Backup, Weekend Support or a lead can still hand out or move tickets by hand, at any time.</span>
+          <span><b>Not finished in window:</b> a ticket handed out but with no contact attempt logged by the end of the window. It still shows on that person's end-of-day report, labelled. One handed out after the window closed has until the end of the day.</span>
+          <span><b>Daylight saving:</b> Manila's clock never changes, but the regions' working hours do, so the windows move by an hour. Change the times here on the day it happens.</span>`)}
+      </div>
+      <div class="card-b stack" style="gap:10px">
+        ${list.map((q, i) => { const err = u.tried && queueErr(q, list, i); return html`<div class="queue-row" data-key="${q.id}">
+          <label class="field"><span>${q.kind === 'inc' ? 'Queue' : '3-Strike region'}</span><input class="in" value="${q.name}" maxlength="60" data-input="queue.qf" data-i="${i}" data-k="name" ${dis}></label>
+          <label class="field"><span>ServiceNow view <span class="hint">to export from</span></span><input class="in" value="${q.view}" maxlength="120" placeholder="${q.kind === 'inc' ? 'The team\'s incident list' : 'e.g. NAM - 3 Strike (2 Hours)'}" data-input="queue.qf" data-i="${i}" data-k="view" ${dis}></label>
+          ${q.kind === 'strike' ? html`
+            <label class="field"><span>Window opens</span><input class="in" type="time" value="${q.start}" data-input="queue.qf" data-i="${i}" data-k="start" ${dis}></label>
+            <label class="field"><span>Window closes</span><input class="in" type="time" value="${q.end}" data-input="queue.qf" data-i="${i}" data-k="end" ${dis}></label>
+            <label class="field"><span>Cutoff <span class="hint">min before close${TIME_RE.test(q.end || '') && !isNaN(Number(q.cutoff)) ? ` = ${strikeCutoff(q)}` : ''}</span></span><input class="in" type="number" min="0" step="5" value="${q.cutoff}" data-input="queue.qf" data-i="${i}" data-k="cutoff" ${dis}></label>
+            <label class="row tight small nowrap queue-on"><input type="checkbox" data-change="queue.qf" data-i="${i}" data-k="active" ${attrs({ checked: q.active !== false, disabled: !lead })}>In use</label>
+            ${lead ? html`<button class="btn ghost sm" title="Remove this queue" aria-label="Remove ${q.name || 'queue'}" data-click="queue.qdel" data-v="${q.id}" data-i="${i}">${icon('x', 14)}</button>` : html`<span></span>`}`
+          : html`<span class="small muted queue-allday">All day · handed out as soon as it loads</span>`}
+          ${err && html`<span class="qm-err" role="alert">${err}</span>`}
+        </div>` })}
+        ${overlap && html`<div class="callout warn small">${icon('alert', 15)}<span>Two 3-Strike windows overlap. That works (each hands out its own tickets), but check it's intended.</span></div>`}
+        ${lead && html`<div class="row"><button class="btn sm" data-click="queue.qadd">${icon('plus', 14)}Add a 3-Strike queue</button>
+          <span class="spacer"></span><span class="muted small">${v.queuesBy ? `Last changed by ${nameOf(v.queuesBy.by)}, ${fmtWhen(v.queuesBy.at)}` : 'From the team\'s 3-Strike Monitoring Schedule'}</span>
+          <button class="btn ghost" data-click="queue.qreset" ${attrs({ disabled: !dirty })}>Discard</button>
+          <button class="btn primary" data-click="queue.qsave" ${attrs({ disabled: !dirty })}>${icon('check', 15)}Save queues</button></div>`}
+      </div></div>`
+  }
+
   function checkSetting(s, v) {
     if (s.type === 'num') return v === '' || isNaN(Number(v)) || Number(v) < 0 ? 'Enter a number (0 or more).' : null
     if (s.type === 'time') return /^\d{2}:\d{2}$/.test(String(v)) ? null : 'Use HH:MM.'
@@ -923,8 +1158,8 @@
         <b>ServiceNow import</b>
         <span class="row tight muted snow-live"><span class="${cls('dot', dot)}"></span>${h.age == null ? 'No export yet' : `${h.label} · ${fmtAgo(h.age)} ago`}</span>
       </button>
-      <button class="${cls('btn sm snow-import', h.tone === 'good' ? '' : 'primary')}" data-click="queue.goImport">${icon('upload', 14)}Import data</button>
-      ${pop && html`<div class="popover popover-center" style="width:340px">
+      <button class="btn sm primary snow-import" data-click="queue.goImport">${icon('upload', 14)}Import data</button>
+      ${pop && html`<div class="popover popover-center" style="width:min(480px, calc(100vw - 32px))">
         <div class="card-h"><h3>Import health</h3><span class="spacer"></span><span class="${cls('pill', h.tone)}">${h.label}</span></div>
         <div class="card-b stack">
           ${(v.latest ? [
@@ -939,7 +1174,7 @@
             ['Waiting for someone on shift', unassigned],
             ['Past SLA', breached],
             ['Export time zone', v.settings.exportTz === 'local' ? "This computer's clock" : `UTC${Number(v.settings.exportTz) >= 0 ? '+' : ''}${v.settings.exportTz}`],
-          ] : [['Source', 'ServiceNow incident export (CSV)'], ['Status', 'Nothing loaded yet']]).map(([k, val]) => html`<div class="row" style="justify-content:space-between;gap:12px"><span class="muted">${k}</span><b class="num" style="text-align:right">${val}</b></div>`)}
+          ] : [['Source', 'ServiceNow incident export (CSV)'], ['Status', 'Nothing loaded yet']]).map(([k, val]) => html`<div class="row" style="justify-content:space-between;gap:16px;flex-wrap:nowrap"><span class="muted nowrap" style="flex:none">${k}</span><b class="num" style="text-align:right;min-width:0">${val}</b></div>`)}
           ${h.tone !== 'good' && html`<div class="muted small">${v.latest ? 'The team loads a fresh export every ' + v.settings.uploadReminder + ' minutes; anyone can do it.' : 'Export the incident list from ServiceNow as CSV and load it.'}</div>`}
           <label class="${cls('qm-drop sm', imp().drag && 'on')}" style="margin-top:6px" data-dragover="queue.dragover" data-dragleave="queue.dragleave" data-drop="queue.popDrop">
             ${icon('upload', 16)}
@@ -953,7 +1188,7 @@
   }
 
   // ---------- Exports ----------
-  S.queue = { soundOn, chime, SOUND_KEY, scheduledToday, waitingReason, snowHref, incLink, detailsBtn, parseCsv, readText, workingOn, strikeCount, canApproveStrikes, dayOf, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
+  S.queue = { inQueueToday, givenToday, underLimit, targets, createdAt, queuedAt, queueHealth, slaPill, fmtHm, fmtWhen, soundOn, chime, SOUND_KEY, scheduledToday, waitingReason, snowHref, incLink, detailsBtn, parseCsv, readText, workingOn, strikeCount, canOverrideStrikes, dayOf, at, minutes, startOfDay, DEFAULT_QUEUES, cleanQueue, strikeCutoff, tagPill, eersPill, ownerCell, healthPills, importHealth, importPill, importAction, importModal, onShiftStack, handover, ticketTable, view, owner, onShift, loadToday, health, isOpen, plan, handOut, rebalancePlan, rebalancePreview, rebalance, TAGS, myTickets, teamQueue, ticketDrawer, settingsPanel, nameOf,
     _test: { parseCsv, normalise, parseWhen, eersMatch, fold, shiftWindow, rebalancePlan } }
 
   // Loading the export lives on Home; the ticket list on Queue Management → Team queue.
@@ -968,13 +1203,21 @@
     'queue.q': (el) => S.set(S.ui('p:qm:queue'), { q: el.value }),
     'queue.open': (el) => S.set(page(), { tsel: el.dataset.v, tnote: '', moveTo: '' }),
     'queue.close': () => S.set(page(), { tsel: null }),
+    // The INC link opens ServiceNow in a new tab (the browser does that); this only logs when.
+    // One log per person per assignment is enough for the ticket history.
+    'queue.snOpen': (el) => {
+      const me = qm.me()
+      const t = view().ticketMap.get(el.dataset.v)
+      if (!me || !t || t.opens.some((o) => o.by === me.soeid && o.at >= (t.assignedAt || 0))) return
+      qm.send({ type: 'ticketOpened', n: t.n })
+    },
     'queue.noteText': (el) => { const p = page(); const was = !!(p.tnote || '').trim(); p.tnote = el.value; if (was !== !!el.value.trim()) S.render() },
     'queue.note': async (el) => { const p = page(); if (await qm.send({ type: 'ticketNote', n: el.dataset.v, text: (p.tnote || '').trim() })) S.set(p, { tnote: '' }) },
     'queue.tagSel': async (el) => {
       const n = el.dataset.v
       const g = el.value
       if (g === 'Resolved' && S.liveResolve) { el.value = 'Assigned'; S.liveResolve.start(n); return }
-      if (await qm.send({ type: 'ticketTag', n, tag: g })) S.dispatch({ type: 'toast', text: g === 'On Hold' ? `${n} is On Hold: it moves to the 3-Strike queue` : `${n} tagged ${g}` })
+      if (await qm.send({ type: 'ticketTag', n, tag: g })) S.dispatch({ type: 'toast', text: g === 'On Hold' ? `${n} is On Hold: in ServiceNow it moves to the user's regional 3-Strike queue` : `${n} tagged ${g}` })
       else S.render()
     },
     'queue.tag': async (el) => { if (await qm.send({ type: 'ticketTag', n: el.dataset.v, tag: el.dataset.t })) S.dispatch({ type: 'toast', text: `${el.dataset.v} tagged ${el.dataset.t}` }) },
@@ -996,7 +1239,7 @@
     'queue.dragover': (el, ev) => { ev.preventDefault(); if (!imp().drag) S.set(imp(), { drag: true }) },
     'queue.dragleave': () => S.set(imp(), { drag: false }),
     'queue.drop': (el, ev) => { ev.preventDefault(); S.set(imp(), { drag: false }); readFile(ev.dataTransfer && ev.dataTransfer.files[0]) },
-    'queue.cancel': () => S.set(imp(), { preview: null, error: null }),
+    'queue.cancel': () => S.set(imp(), { preview: null, error: null, queue: null, file: null }),
     'queue.confirm': () => confirmImport(),
     'queue.undo': async (el) => { if (await qm.send({ type: 'importUndo', importId: el.dataset.v })) { S.set(imp(), { last: null }); S.dispatch({ type: 'toast', text: 'Load undone' }) } },
     'queue.handout': async () => { const p = await handOut(null); S.dispatch({ type: 'toast', text: p.list.length ? `Handed out ${p.list.length} tickets` : 'Nobody on shift before their cutoff' }) },
@@ -1006,7 +1249,18 @@
     'queue.goImport': () => goImport(),
     'queue.goQueue': () => goQueue(),
     'queue.impOpen': () => S.set(imp(), { open: true }),
-    'queue.impClose': () => S.set(imp(), { open: false, preview: null, error: null, last: null }),
+    'queue.impQueue': (el) => { const u = imp(); S.set(u, { queue: el.value, error: null }); if (u.file) readFile(u.file) },
+    'queue.impClose': () => S.set(imp(), { open: false, preview: null, error: null, last: null, queue: null, file: null }),
+    'queue.qf': (el) => { const u = S.ui('p:team:queues'); const list = qDraft(); const q = list[Number(el.dataset.i)]; if (!q) return; q[el.dataset.k] = el.type === 'checkbox' ? el.checked : el.value; u.draft = list; S.render() },
+    'queue.qadd': () => { const u = S.ui('p:team:queues'); const list = qDraft(); list.push({ id: `strike-${uid('q').slice(-6).toLowerCase().replace(/[^a-z0-9]/g, '')}`, kind: 'strike', name: '', view: '', start: '', end: '', cutoff: 30, active: true }); u.draft = list; S.render() },
+    'queue.qdel': (el) => { const u = S.ui('p:team:queues'); const list = qDraft(); list.splice(Number(el.dataset.i), 1); u.draft = list; S.render() },
+    'queue.qreset': () => S.set(S.ui('p:team:queues'), { draft: null, tried: false }),
+    'queue.qsave': async () => {
+      const u = S.ui('p:team:queues')
+      const list = qDraft()
+      if (list.some((q, i) => queueErr(q, list, i))) { S.set(u, { tried: true }); return }
+      if (await qm.send({ type: 'queuesSet', queues: list.map(cleanQueue) })) { S.set(u, { draft: null, tried: false }); S.dispatch({ type: 'toast', text: 'Queues saved for the team' }) }
+    },
     'queue.hoNotes': (el) => { ho().notes = el.value; S.render() },
     'queue.hoCopy': () => { const t = handoverText(); (navigator.clipboard ? navigator.clipboard.writeText(t) : Promise.reject()).then(() => S.dispatch({ type: 'toast', text: 'Handover summary copied' }), () => S.dispatch({ type: 'toast', text: "Couldn't copy; select the text instead" })) },
     // From the header popover: go Home and open the import first (navigating resets the

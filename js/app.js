@@ -1,16 +1,16 @@
 // App shell, ported from src/App.jsx, src/pages/SignIn.jsx and src/components/DevTools.jsx:
 // workspace picker → sign in → sidebar, header and the current page.
-;(function () {
+; (function () {
   const { html, cls, attrs, icon, seg, storage, byId, initials, fmtTime, slaInfo, workspaceById, WORKSPACES } = S
 
   // Account profile is reached from the profile menu at the bottom of the sidebar.
   // managerOnly pages are hidden from analysts and fall back to Home if opened by link.
   const PAGES = [
     { id: 'home', label: 'Home', icon: 'home', title: 'Queue command', desc: 'Live incident queue, queue health and today\'s staffing.', noHead: () => !!(S.homeLive && S.schedule && S.schedule.real() && S.qm.me()) },
-    { id: 'qm', label: 'Queue Management', icon: 'clip', title: 'Queue Management', desc: 'Work your tickets and log the ones you handled outside your queue.', aside: () => S.queue && S.queue.onShiftStack() },
+    { id: 'qm', label: 'My queue', icon: 'clip', title: 'My queue', desc: 'Work your tickets and log the ones you handled outside your queue.', aside: () => S.queue && S.queue.onShiftStack() },
     { id: 'explorer', label: 'Ticket Explorer', icon: 'search', title: 'Ticket Explorer', desc: 'How every incident was solved: resolution journeys, codes and handover history.' },
-    { id: 'reports', label: 'Reports', icon: 'chart', title: 'Reports', desc: 'Performance, quality and coaching, plus self-serve questions answered in your browser.' },
-    { id: 'team', label: 'Team Management', icon: 'team', title: 'Team Management', desc: 'Roster, access, shift coverage, attendance and your password vault.' },
+    { id: 'reports', label: 'Reports', icon: 'chart', title: 'Reports', desc: 'Performance, quality and coaching, plus self-serve questions answered in your browser.', aside: () => S.reportsAside && S.reportsAside() },
+    { id: 'team', label: 'Team Management', icon: 'team', title: 'Team Management', desc: 'Roster, access, shift coverage, and attendance.' },
     { id: 'kb', label: 'Knowledge Base', icon: 'book', title: 'Knowledge Base', desc: 'Runbooks, policies and live reference data. Publish a page and Copilot can use it.' },
     { id: 'copilot', label: 'Copilot', icon: 'spark', title: 'Copilot', bare: true, desc: 'Help resolving tickets and reading the operation, grounded in your knowledge base and live data.' },
     { id: 'suggestions', label: 'Suggestions', icon: 'bulb', title: 'Suggestions', managerOnly: true, desc: 'Ideas, bugs and workarounds from the team. File one in a few seconds; everyone sees the same list.' },
@@ -77,6 +77,11 @@
   S.App = function App() {
     const ws = workspaceById(app.wsId)
     if (!ws) return html`${workspacePicker()}${S.toasts()}${S.takeOverlays()}`
+    // One UI (lead, 2026-11-27): when the server has a team roster, Scope always runs on the
+    // team's real data. A browser that isn't signed in as someone on the roster (an old
+    // sample sign-in, for example) goes to the roster sign-in instead of the prototype's
+    // sample screens. The sample screens only remain when Scope opens without the server.
+    if (app.session && S.qm.loadedAt && S.qm.roster.length && !S.qm.me()) { storage.set(SESSION_KEY, null); app.session = null }
     if (!app.session) return html`${signInPage(ws)}${S.toasts()}${S.takeOverlays()}`
     if (!canOpen(PAGES.find((p) => p.id === S.route.page))) {
       S.route = { page: 'home', key: Date.now() }
@@ -193,14 +198,14 @@
         <div class="card-h"><h3>ServiceNow sync</h3><span class="spacer"></span><span class="pill good">Healthy</span></div>
         <div class="card-b stack">
           ${[
-            ['Instance', 'corp.service-now.com (simulated)'],
-            ['Last sync', `${fmtTime(st.snow.lastSync)} · every 30s`],
-            ['API latency', `${st.snow.latencyMs} ms`],
-            ['Open incidents in queue', open_],
-            ['P1 open', p1],
-            ['Waiting for an analyst', unassigned],
-            ['Pulled in the last hour', st.snow.intakeLastHour],
-          ].map(([k, v]) => html`<div class="row" style="justify-content:space-between"><span class="muted">${k}</span><b class="num">${v}</b></div>`)}
+          ['Instance', 'corp.service-now.com (simulated)'],
+          ['Last sync', `${fmtTime(st.snow.lastSync)} · every 30s`],
+          ['API latency', `${st.snow.latencyMs} ms`],
+          ['Open incidents in queue', open_],
+          ['P1 open', p1],
+          ['Waiting for an analyst', unassigned],
+          ['Pulled in the last hour', st.snow.intakeLastHour],
+        ].map(([k, v]) => html`<div class="row" style="justify-content:space-between"><span class="muted">${k}</span><b class="num">${v}</b></div>`)}
           <div class="row" style="margin-top:6px">
             <button class="btn sm" data-click="app.sync">${icon('refresh', 14)}Sync now</button>
           </div>
@@ -351,10 +356,10 @@
           </div>
           <h1>Sign in</h1>
           ${hasRoster() ? rosterLogin(u)
-            : loading ? html`<div class="muted small">Loading the team roster…</div>`
-            : html`<div class="callout warn">${icon('alert', 16)}<span>${location.protocol === 'file:'
-              ? html`<b>Scope needs its server to sign you in.</b> Close this tab and start Scope with <span class="code-chip">run.bat</span> (or <span class="code-chip">share.bat</span> for the team).`
-              : html`<b>No team roster on this server.</b> The lead copies <span class="code-chip">data\\roster.example.json</span> to <span class="code-chip">data\\roster.json</span> on the host, fills in the team, then reloads this page.`}</span></div>`}
+        : loading ? html`<div class="muted small">Loading the team roster…</div>`
+          : html`<div class="callout warn">${icon('alert', 16)}<span>${location.protocol === 'file:'
+            ? html`<b>Scope needs its server to sign you in.</b> Close this tab and start Scope with <span class="code-chip">run.bat</span> (or <span class="code-chip">share.bat</span> for the team).`
+            : html`<b>No team roster on this server.</b> The lead copies <span class="code-chip">data\\roster.example.json</span> to <span class="code-chip">data\\roster.json</span> on the host, fills in the team, then reloads this page.`}</span></div>`}
         </div>
         <span class="small muted">Internal tool · authorised users only</span>
       </main>

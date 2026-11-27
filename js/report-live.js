@@ -69,7 +69,7 @@
     const people = new Map()
     const row = (soeid, name) => {
       const key = soeid || `name:${name}`
-      if (!people.has(key)) people.set(key, { soeid, name: soeid ? Q().nameOf(soeid) : name, onRoster: !!soeid, received: 0, resolved: 0, transferred: 0, manual: 0, eers: 0, strikes: 0, hist: 0, histDone: 0, worked: 0, main: 0, backup: 0, weekend: 0 })
+      if (!people.has(key)) people.set(key, { soeid, name: soeid ? Q().nameOf(soeid) : name, onRoster: !!soeid, received: 0, resolved: 0, transferred: 0, manual: 0, eers: 0, strikes: 0, strikeMissed: 0, hist: 0, histDone: 0, worked: 0, main: 0, backup: 0, weekend: 0 })
       return people.get(key)
     }
     qm().roster.filter((p) => p.active !== false).forEach((p) => row(p.soeid))
@@ -85,7 +85,7 @@
       if (t.eers) r.eers++
     }
     // The team's daily volume: tickets by the day they first came into the queue.
-    for (const t of v.tickets) if (inM(t.firstSeen)) { const d = Q().dayOf(t.firstSeen); if (perDay.has(d)) perDay.set(d, perDay.get(d) + 1) }
+    for (const t of v.tickets) if (t.incSeen && inM(t.incSeen)) { const d = Q().dayOf(t.incSeen); if (perDay.has(d)) perDay.set(d, perDay.get(d) + 1) }
     // Resolved / Transferred in the month, for the ticket's owner.
     for (const t of v.tickets) {
       const o = Q().owner(t)
@@ -93,8 +93,10 @@
       if (t.tag === 'Resolved') row(o).resolved++
       else if (t.tag === 'Transferred') row(o).transferred++
     }
-    // 3-Strike attempts made, by whoever made them.
-    for (const t of v.tickets) for (const h of t.history) if (/^Strike \d|reached the user on Strike/.test(h.what) && inM(h.at)) row(h.by).strikes++
+    // 3-Strike: tickets finished (an attempt logged) and not finished in their window, for
+    // whoever they were handed to (senior's review, 2026-11-24).
+    const sdays = [...new Set(v.tickets.flatMap((t) => t.sk.map((w) => w.day)))].filter((d) => d.slice(0, 7) === k)
+    for (const d of sdays) for (const [soeid, qs] of S.strike.dayCounts(d)) for (const c of Object.values(qs)) { const r = row(soeid); r.strikes += c.done; r.strikeMissed += c.missed }
     // Verified manual entries, by the day they were handled.
     for (const x of qm().entries || []) if (x.status === 'Verified' && inM(x.handledAt)) row(x.by).manual++
     // QueueManager history.
@@ -126,11 +128,12 @@
     }
     const list = [...people.values()].map((p) => {
       const handled = p.resolved + p.transferred + p.manual + p.histDone
-      const credit = p.received + p.manual
+      const credit = p.received + p.manual + p.strikes // Base INC + 3-Strike finished
       return { ...p, handled, credit, perDay: p.worked ? credit / p.worked : null }
     }).filter((p) => p.onRoster && (qm().roster.find((x) => x.soeid === p.soeid) || {}).active !== false) // only the active team (lead, 2026-11-19)
       .sort((a, b) => b.credit - a.credit || a.name.localeCompare(b.name))
-    const total = [...perDay.values()].reduce((a, b) => a + b, 0)
+    // The team's total: INC received (and QueueManager history) per day, plus 3-Strike finished.
+    const total = [...perDay.values()].reduce((a, b) => a + b, 0) + list.reduce((a, p) => a + p.strikes, 0)
     const activeDays = [...perDay.values()].filter((n) => n > 0).length
     const sharing = list.filter((p) => p.credit > 0)
     const shares = sharing.map((p) => p.credit)
@@ -158,16 +161,23 @@
         <h2 class="mr-title">Monthly report</h2>
         <select class="in" aria-label="Month" data-change="mr.month">${ms.map((k) => html`<option value="${k}" ${attrs({ selected: k === u.k })}>${monthLabel(k)}</option>`)}</select>
         <span class="spacer"></span>
-        <button class="btn ghost sm" data-click="mr.csv">${icon('table', 14)}Export for Excel</button>
+        <details class="dd">
+          <summary class="btn sm">${icon('download', 14)}Export ${icon('chevDown', 12)}</summary>
+          <div class="dd-menu" role="menu">
+            <button role="menuitem" data-click="mr.csv">${icon('table', 15)}<span><b>Excel</b><span class="muted small">Per person and per day, as a CSV that opens in Excel</span></span></button>
+            <button role="menuitem" data-click="mr.html">${icon('chart', 15)}<span><b>Charts report (HTML)</b><span class="muted small">The whole report with its charts, as one page: open in any browser or print to PDF</span></span></button>
+          </div>
+        </details>
       </div>
       <div class="callout accent small">${icon('info', 15)}<span><b>For transparency, not forced equality:</b> daily volumes differ, so look at the spread and tickets per day worked, not just totals. Everyone on the team can see this page.</span></div>
+      ${S.reportAnalytics ? S.reportAnalytics(m.k) : ''}
       <section class="grid g-kpi" aria-label="Month at a glance">
         ${S.kpi({ label: 'Tickets received', icon: 'doc', tone: 'sky', value: m.total, foot: `${monthLabel(m.k)}${m.hist ? ' · includes QueueManager history' : ''}`, info: html`<span>Tickets that came into the queue in the month, by the day Scope first saw them in an export (plus QueueManager's assigned totals for the days before Scope). Verified manual entries are not included here.</span>` })}
         ${S.kpi({ label: 'Average per day', icon: 'chart', tone: 'navy', value: n1(m.avg), foot: `Over ${m.activeDays} day${m.activeDays === 1 ? '' : 's'} with tickets`, info: html`<span>Tickets received ÷ days in the month that had at least one ticket. Days without tickets (weekends, holidays) don't pull the average down.</span>` })}
         ${S.kpi({ label: 'Spread across', icon: 'team', tone: 'ice', value: m.n, unit: m.n === 1 ? ' analyst' : ' analysts', foot: m.n ? `Fewest ${m.min} · most ${m.max} · even share ${n1(m.fair)}` : 'Nobody yet', info: html`<span>People who received tickets or had manual entries verified. The even share is the total ÷ that number; a gap from it is normal when people had leave, rest days or Proci weeks.</span>` })}
       </section>
       <div class="card">
-        <div class="card-h"><h2>Received per day</h2><span class="muted small">${monthLabel(m.k)}</span></div>
+        <div class="card-h"><h2>Received per day</h2><span class="muted small">${monthLabel(m.k)}</span><span class="spacer"></span>${(() => { const top = m.days.map((x) => [x, m.perDay.get(x) || 0]).sort((a, b) => b[1] - a[1])[0]; return S.infoTip('mr-daily', 'Received per day', html`<span>Tickets that came into the queue each day of the month, by the day Scope first saw them in an export (plus QueueManager's totals for days before Scope).</span>${top && top[1] ? html`<span><b>Insights</b></span><span>• Busiest day: ${new Date(`${top[0]}T00:00:00`).toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'short' })} with ${top[1]} tickets.</span><span>• Average ${n1(m.avg)} on days with tickets; weekends are usually quiet.</span>` : ''}`) })()}</div>
         <div class="card-b">${m.total ? S.barChart('mr-daily', { labels: m.days.map((x) => String(Number(x.slice(8)))), values: d, fmt: (x) => `${Math.round(x)} tickets` }) : html`<div class="empty">No tickets received this month yet.</div>`}</div>
       </div>
       <div class="card">
@@ -175,16 +185,16 @@
           <span><b>Received:</b> tickets that became theirs this month (a moved ticket counts for its current owner).</span>
           <span><b>Handled:</b> Resolved + Transferred this month + verified manual entries (Q8, lead 2026-11-19). Transferred is shown separately too.</span>
           <span><b>Manual:</b> verified manual entries, by the day they were handled.</span>
-          <span><b>3-Strike:</b> contact attempts they logged.</span>
+          <span><b>3-Strike:</b> 3-Strike tickets they finished (a contact attempt logged in the window); these count toward the equal share. <b>Not finished</b>: handed out, no attempt by the end of the window.</span>
           <span><b>Per day worked:</b> (received + manual) ÷ days worked. Days worked come from Schedule & coverage; leave and rest days don't count.</span>
           <span><b>Main / Backup / Weekend:</b> days in that role from the Proci rota.</span>
           ${m.hist > 0 && html`<span><b>QueueManager history:</b> days before Scope's first export use QueueManager's end-of-day totals: assigned counts as received, done as handled.</span>`}`)}</div>
         <div class="tbl-wrap"><table class="tbl mr-tbl">
-          <thead><tr><th>Analyst</th><th class="num">Received</th><th class="num">Handled</th><th class="num">Transferred</th><th class="num">EERS</th><th class="num">Manual</th><th class="num">3-Strike</th><th class="num">Days worked</th><th class="num">Per day worked</th><th class="num">Main / Backup / Weekend</th></tr></thead>
+          <thead><tr><th>Analyst</th><th class="num">Received</th><th class="num">Handled</th><th class="num">Transferred</th><th class="num">EERS</th><th class="num">Manual</th><th class="num">3-Strike</th><th class="num">3-Strike not finished</th><th class="num">Days worked</th><th class="num">Per day worked</th><th class="num">Main / Backup / Weekend</th></tr></thead>
           <tbody>${m.list.map((p) => html`<tr data-key="${p.soeid || p.name}">
             <td>${p.name}</td>
             <td class="num">${p.received}</td><td class="num"><b>${p.handled}</b></td><td class="num">${p.transferred}</td><td class="num">${p.eers}</td>
-            <td class="num">${p.manual}</td><td class="num">${p.strikes}</td><td class="num">${p.worked}</td><td class="num">${n1(p.perDay)}</td>
+            <td class="num">${p.manual}</td><td class="num">${p.strikes}</td><td class="num">${p.strikeMissed || ''}</td><td class="num">${p.worked}</td><td class="num">${n1(p.perDay)}</td>
             <td class="num nowrap">${p.main} / ${p.backup} / ${p.weekend}</td>
           </tr>`)}</tbody>
         </table></div>
@@ -199,7 +209,7 @@
     const u = S.ui('p:reports:eod', { preview: null, error: null, files: {} })
     const span = h.rows.length ? [h.rows.reduce((a, r) => (r.day < a ? r.day : a), '9999'), h.rows.reduce((a, r) => (r.day > a ? r.day : a), '0000')] : null
     return html`<div class="card">
-      <div class="card-h"><h2>QueueManager history</h2><span class="muted small">${span ? `${h.rows.length} person-days, ${span[0]} to ${span[1]}` : 'Not imported yet'}</span></div>
+      <div class="card-h"><h2>QueueManager history</h2><span class="muted small">${span ? `${h.rows.length} person-days, ${span[0]} to ${span[1]}` : 'Not imported yet'}</span><span class="spacer"></span>${S.infoTip('mr-hist', 'QueueManager history', html`<span>The team's end-of-day totals from QueueManager, the tool before Scope, so the months before Scope's first export aren't empty. A lead imports three tables exported from its Access file as CSV.</span><span>${span ? `Covers ${new Set(h.rows.map((r) => r.soeid || r.name)).size} people from ${span[0]} to ${span[1]}. Days from Scope's first export onward use Scope's own data.` : 'Not imported yet: months before Scope will show only what Scope has seen.'}</span>`)}</div>
       <div class="card-b stack" style="gap:12px">
         <span class="small ink2">Brings QueueManager's end-of-day totals per person into this report, so the months before Scope aren't empty. Export three tables from the QueueManager Access file as CSV: <b>tbl_EODReports</b>, <b>tbl_DaySessions</b> and <b>tbl_Members</b>.</span>
         ${lead ? html`
@@ -275,16 +285,35 @@
   function exportCsv() {
     const m = build(ui().k)
     const cell = (v) => `"${String(v == null ? '' : v).replace(/"/g, '""')}"`
-    const head = ['Month', 'Analyst', 'SOEID', 'Received', 'Handled', 'Resolved', 'Transferred', 'EERS', 'Verified manual entries', '3-Strike attempts', 'QueueManager assigned', 'QueueManager done', 'Days worked', 'Per day worked', 'Days as Main Proci', 'Days as Proci Backup', 'Days as Weekend Support']
-    const rows = m.list.map((p) => [monthLabel(m.k), p.name, p.soeid || '', p.received, p.handled, p.resolved, p.transferred, p.eers, p.manual, p.strikes, p.hist, p.histDone, p.worked, p.perDay == null ? '' : Math.round(p.perDay * 10) / 10, p.main, p.backup, p.weekend])
+    const head = ['Month', 'Analyst', 'SOEID', 'Received', 'Handled', 'Resolved', 'Transferred', 'EERS', 'Verified manual entries', '3-Strike finished', '3-Strike not finished', 'QueueManager assigned', 'QueueManager done', 'Days worked', 'Per day worked', 'Days as Main Proci', 'Days as Proci Backup', 'Days as Weekend Support']
+    const rows = m.list.map((p) => [monthLabel(m.k), p.name, p.soeid || '', p.received, p.handled, p.resolved, p.transferred, p.eers, p.manual, p.strikes, p.strikeMissed, p.hist, p.histDone, p.worked, p.perDay == null ? '' : Math.round(p.perDay * 10) / 10, p.main, p.backup, p.weekend])
     const daily = [[], ['Day', 'Received'], ...m.days.map((d) => [d, m.perDay.get(d)])]
     S.download(`scope-monthly-${m.k}.csv`, '﻿' + [head, ...rows, ...daily].map((r) => r.map(cell).join(',')).join('\r\n'), 'text/csv')
+  }
+
+  // The whole monthly report as one standalone page (opens in any browser, prints to PDF).
+  function exportHtml() {
+    const m = build(ui().k)
+    const esc = S.reportEsc; const sec = S.reportSection
+    const max = Math.max(1, ...m.days.map((d) => m.perDay.get(d) || 0))
+    const kpi = (l, v, f) => `<div class="sheet kpi"><div class="l">${esc(l)}</div><div class="v">${esc(v)}</div><div class="sub">${esc(f)}</div></div>`
+    const body = [
+      `<div class="note">For transparency, not forced equality: daily volumes differ, so look at the spread and tickets per day worked, not just totals.</div>`,
+      `<div class="kpis">${kpi('Tickets received', m.total, monthLabel(m.k) + (m.hist ? ' · includes QueueManager history' : ''))}${kpi('Average per day', n1(m.avg), `Over ${m.activeDays} day${m.activeDays === 1 ? '' : 's'} with tickets`)}${kpi('Spread across', `${m.n} analyst${m.n === 1 ? '' : 's'}`, m.n ? `Fewest ${m.min} · most ${m.max} · even share ${n1(m.fair)}` : 'Nobody yet')}</div>`,
+      S.reportAnalyticsHtml ? S.reportAnalyticsHtml(m.k) : '',
+      sec('Per person', `<table><thead><tr><th>Analyst</th><th class="r">Received</th><th class="r">Handled</th><th class="r">Transferred</th><th class="r">EERS</th><th class="r">Manual</th><th class="r">3-Strike</th><th class="r">3-Strike not finished</th><th class="r">Days worked</th><th class="r">Per day worked</th><th class="r">Main / Backup / Weekend</th></tr></thead><tbody>${m.list.map((p) => `<tr><td>${esc(p.name)}</td><td class="r">${p.received}</td><td class="r"><b>${p.handled}</b></td><td class="r">${p.transferred}</td><td class="r">${p.eers}</td><td class="r">${p.manual}</td><td class="r">${p.strikes}</td><td class="r">${p.strikeMissed || ''}</td><td class="r">${p.worked}</td><td class="r">${n1(p.perDay)}</td><td class="r">${p.main} / ${p.backup} / ${p.weekend}</td></tr>`).join('')}</tbody></table>`),
+      sec('Received per day', `<table><thead><tr><th>Day</th><th></th><th class="r">Received</th></tr></thead><tbody>${m.days.map((d) => { const n = m.perDay.get(d) || 0; return `<tr><td>${esc(new Date(`${d}T00:00:00`).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' }))}</td><td style="width:60%"><div class="bar"><i style="width:${(n / max) * 100}%;background:var(--a)"></i></div></td><td class="r">${n}</td></tr>` }).join('')}</tbody></table>`),
+      `<div class="note"><b>Received:</b> tickets that became theirs this month. <b>Handled:</b> Resolved + Transferred + verified manual entries. <b>3-Strike:</b> finished in the window (counts toward the equal share); not finished = handed out, no attempt by the window's end. <b>Per day worked:</b> (received + manual) ÷ days worked.</div>`,
+    ].join('')
+    S.download(`scope-monthly-${m.k}.html`, S.reportPageHtml({ title: `Monthly report · ${monthLabel(m.k)}`, sub: `Scope · Reports · generated ${new Date().toLocaleString()}`, body }), 'text/html')
+    S.dispatch({ type: 'toast', text: 'Monthly report downloaded' })
   }
 
   S.reportLive = page
   S.on({
     'mr.month': (el) => S.set(ui(), { k: el.value }),
-    'mr.csv': () => exportCsv(),
+    'mr.csv': (el) => { const d = el.closest('details'); if (d) d.open = false; exportCsv() },
+    'mr.html': (el) => { const d = el.closest('details'); if (d) d.open = false; exportHtml() },
     'mr.eodFiles': (el) => { const f = el.files; readEod(f).then(() => { el.value = '' }) },
     'mr.eodCancel': () => S.set(S.ui('p:reports:eod'), { preview: null, files: {}, error: null }),
     'mr.eodImport': async () => {

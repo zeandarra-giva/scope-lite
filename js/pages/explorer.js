@@ -20,7 +20,7 @@
     if (r.ticket && S.state.history.some((h) => h.id === r.ticket)) active = tabKey.ticket(r.ticket)
     else if (r.code && S.state.codes.some((c) => c.code === r.code)) active = tabKey.code(r.code)
     if (active !== 'home') S.dispatch({ type: 'explorerTabOpen', id: active })
-    return { section: r.tab || 'tickets', active }
+    return { section: r.tab || (S.explorerLive && S.explorerLive.live() ? 'live' : 'tickets'), active }
   })
 
   // The open tabs, in the order they were opened.
@@ -71,10 +71,13 @@
       </div>
       ${!cur && html`
         ${S.tabs([
+          // On real team data: the history of every INC ticket (explorer-live.js).
+          ...(S.explorerLive && S.explorerLive.live() ? [{ id: 'live', label: 'Ticket history', icon: 'clock' }] : []),
           { id: 'tickets', label: 'Resolved tickets', count: state.history.length, icon: 'doc' },
           { id: 'codes', label: 'Resolution codes', count: state.codes.length, icon: 'book' },
           { id: 'handover', label: 'Handover log', count: unacked || null, icon: 'clip' },
         ], u.section, 'explorer.section')}
+        ${u.section === 'live' && S.explorerLive && S.explorerLive.live() && S.explorerLive.section()}
         ${u.section === 'tickets' && tickets()}
         ${u.section === 'codes' && codes()}
         ${u.section === 'handover' && handoverLog()}`}
@@ -117,9 +120,9 @@
     return html`
       <section class="grid g-kpi">
         ${kpi({ label: 'Total records', icon: 'doc', value: rows.length.toLocaleString(), foot: `${f.range === 'all' ? 'All time' : `Last ${f.range} days`}` })}
-        ${kpi({ label: 'Avg EZE MTTR', icon: 'clock', tone: 'azure', value: fmtH(k.eze), info: html`<span><b>End-to-end MTTR</b>: from the moment the ticket is opened in ServiceNow to the moment it is resolved.</span><span>Average of (resolved − opened) across the filtered tickets.</span>` })}
+        ${kpi({ label: 'Avg E2E MTTR', icon: 'clock', tone: 'azure', value: fmtH(k.eze), info: html`<span><b>End-to-end MTTR</b>: from the moment the ticket is opened in ServiceNow to the moment it is resolved.</span><span>Average of (resolved − opened) across the filtered tickets.</span>` })}
         ${kpi({ label: 'Avg RES MTTR', icon: 'bolt', tone: 'ice', value: fmtH(k.res), info: html`<span><b>Resolver MTTR</b>: from assignment to an analyst until resolution. This is the time the resolver actually owned the ticket.</span><span>Average of (resolved − assigned).</span>` })}
-        ${kpi({ label: 'Avg lost time', icon: 'pause', tone: 'navy', value: fmtH(k.lost), info: html`<span><b>Lost time</b> = EZE MTTR − RES MTTR.</span><span>Time a ticket spent waiting in the queue or bouncing between groups before the right resolver had it. Turns amber above 2h.</span>`, state: k.lost > 2 ? 'warn' : undefined })}
+        ${kpi({ label: 'Avg lost time', icon: 'pause', tone: 'navy', value: fmtH(k.lost), info: html`<span><b>Lost time</b> = E2E MTTR − RES MTTR.</span><span>Time a ticket spent waiting in the queue or bouncing between groups before the right resolver had it. Turns amber above 2h.</span>`, state: k.lost > 2 ? 'warn' : undefined })}
         ${kpiShell({ label: `Goal: ≤${RES_GOAL_H} hours`, icon: 'check', state: k.goal >= 0.8 ? 'good' : k.goal >= 0.65 ? 'warn' : 'crit', info: html`
           <span>Share of filtered tickets whose RES MTTR is under ${RES_GOAL_H} hours.</span>
           <span>Team target is 80%. The marker on the bar shows the target; the card turns amber below 80% and red below 65%.</span>` }, html`
@@ -152,7 +155,7 @@
           <table class="tbl">
             <thead><tr>
               <th>Ticket</th><th>Solved by</th><th>Problem category</th><th>Business app</th><th>Diagnosis note</th><th>Remedy / fix note</th><th>Code</th>
-              <th>Date opened</th><th>Date resolved</th><th class="r">EZE MTTR</th><th class="r">RES MTTR</th><th class="r">Lost time</th><th>FCR</th>
+              <th>Date opened</th><th>Date resolved</th><th class="r">E2E MTTR</th><th class="r">RES MTTR</th><th class="r">Lost time</th><th>FCR</th>
               <th>Breach reason</th><th>Deflection</th><th>Escalated to</th>
             </tr></thead>
             <tbody>
@@ -203,7 +206,7 @@
     const score = Math.round((qaItems.filter((x) => x[1]).length / qaItems.length) * 100)
     return html`
       <div class="grid" style="grid-template-columns:repeat(auto-fit, minmax(110px, 1fr));gap:10px">
-        ${[['EZE MTTR', fmtH(h.ezeH)], ['RES MTTR', fmtH(h.resH)], ['Lost time', fmtH(h.lostH)], ['FCR', h.fcr ? 'Yes' : 'No'], ['Transfers', h.transfers]].map(([k, v]) => html`
+        ${[['E2E MTTR', fmtH(h.ezeH)], ['RES MTTR', fmtH(h.resH)], ['Lost time', fmtH(h.lostH)], ['FCR', h.fcr ? 'Yes' : 'No'], ['Transfers', h.transfers]].map(([k, v]) => html`
           <div class="stack" style="gap:2px"><span class="eyebrow">${k}</span><b class="num" style="font-size:18px;font-family:var(--f-cond)">${v}</b></div>`)}
       </div>
       <div class="callout accent" style="flex-direction:column;gap:4px">

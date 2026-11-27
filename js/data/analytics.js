@@ -18,7 +18,7 @@ const DIMENSIONS = {
 const MEASURES = {
   count: { label: 'Ticket volume', fn: (r) => r.length, fmt: (v) => Math.round(v), better: 'none' },
   res: { label: 'Avg RES MTTR', fn: (r) => avg(r.map((x) => x.resH)), fmt: fmtH, better: 'low' },
-  eze: { label: 'Avg EZE MTTR', fn: (r) => avg(r.map((x) => x.ezeH)), fmt: fmtH, better: 'low' },
+  eze: { label: 'Avg E2E MTTR', fn: (r) => avg(r.map((x) => x.ezeH)), fmt: fmtH, better: 'low' },
   lost: { label: 'Avg lost time', fn: (r) => avg(r.map((x) => x.lostH)), fmt: fmtH, better: 'low' },
   sla: { label: 'SLA attainment', fn: (r) => r.filter((x) => x.slaMet).length / Math.max(1, r.length), fmt: (v) => `${Math.round(v * 100)}%`, better: 'high' },
   fcr: { label: 'FCR rate', fn: (r) => r.filter((x) => x.fcr).length / Math.max(1, r.length), fmt: (v) => `${Math.round(v * 100)}%`, better: 'high' },
@@ -97,7 +97,7 @@ const DIM_WORDS = [
   [/code|fix|resolution/, 'code'], [/priority|severity/, 'priority'], [/trend|week|over time|weekly/, 'week'],
 ]
 const MEASURE_WORDS = [
-  [/lost|waiting|wait/, 'lost'], [/eze|end.to.end/, 'eze'], [/mttr|slow|fast|resolution time|time to resolve|duration/, 'res'],
+  [/lost|waiting|wait/, 'lost'], [/eze|e2e|end.to.end/, 'eze'], [/mttr|slow|fast|resolution time|time to resolve|duration/, 'res'],
   [/fcr|first contact/, 'fcr'], [/sla|breach|attainment/, 'sla'], [/transfer|bounce|reassign/, 'transfers'],
   [/goal|under 4|<\s*4/, 'goal'], [/volume|count|how many|most|number/, 'count'],
 ]

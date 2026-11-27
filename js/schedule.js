@@ -34,7 +34,9 @@
       if (e.type === 'shiftPlanSet' && isLead(ev.by) && e.week && e.soeid) {
         const k = `${R().mondayOf(e.week)}|${e.soeid}`
         if (e.shift === 'EARLY' || e.shift === 'LATE') plan.set(k, e.shift); else plan.delete(k)
-      } else if (e.type === 'shiftDaySet' && (isLead(ev.by) || ev.by === e.soeid) && /^\d{4}-\d{2}-\d{2}$/.test(e.day || '') && e.soeid) {
+      } else if (e.type === 'shiftDaySet' && qm.roster.some((p) => p.soeid === ev.by) && /^\d{4}-\d{2}-\d{2}$/.test(e.day || '') && e.soeid) {
+        // Anyone on the team may set anyone's shift for a day (lead, 2026-11-27); the person
+        // is told in their bell (liveNotifications).
         const k = `${e.day}|${e.soeid}`
         if (e.shift === 'EARLY' || e.shift === 'LATE') dayPlan.set(k, e.shift); else dayPlan.delete(k)
       } else if (e.type === 'shiftStart' && e.day) {
@@ -128,17 +130,15 @@
   const isWeekendDay = (day) => (R().parse(day).getDay() + 6) % 7 >= 5
 
   // Who may change a cell: a lead anyone's; everyone else their own (shifts on weekdays, and leave).
-  const canEdit = (soeid, lead) => lead || (qm.me() && qm.me().soeid === soeid) || R().canLeave(soeid)
+  const canEdit = (soeid, lead) => !!qm.me() // anyone can change anyone's shift; the person is notified
   function cellBody(pl) {
     if (pl.role === 'LEAVE') return html`<span class="ev PL sc-chip">Leave</span>`
     if (pl.role === 'REST') return html`<span class="sc-chip off">Rest day</span>`
     if (pl.shift === 'OFF') return html`<span class="sc-chip off">Off</span>`
     if (pl.shift === 'WEEKEND') return html`<span class="ev W sc-chip">Weekend</span>`
-    const role = ROLE_CHIP[pl.role]
     return html`${pl.shift
       ? html`<span class="${cls('ev sc-chip', pl.shift === 'EARLY' ? 'E' : 'L')}" title="${pl.oneDay ? 'Changed for this day only' : pl.auto ? "Scope's plan (meets the Early and Late minimums)" : "This week's shift"}">${S.shiftLabel(pl.shift)}${pl.oneDay && html`<i class="sc-dot" aria-label="changed for this day only"></i>`}</span>`
-      : html`<span class="sc-chip unset" title="No shift set for this person">No shift</span>`}
-      ${role && html`<span class="sc-role">${icon('shield', 11)}${role}</span>`}`
+      : html`<span class="sc-chip unset" title="No shift set for this person">No shift</span>`}`
   }
   function cell(p, day, lead) {
     const pl = planFor(p.soeid, day)
@@ -155,7 +155,7 @@
     if (S.pop !== 'scmenu' || !m) return ''
     const pl = planFor(m.s, m.d)
     const own = qm.me() && qm.me().soeid === m.s
-    const shifts = (lead || own) && !isWeekendDay(m.d) && pl.role !== 'LEAVE' && pl.role !== 'REST'
+    const shifts = !isWeekendDay(m.d) && pl.role !== 'LEAVE' && pl.role !== 'REST'
     const who = nameOf(m.s).split(' ')[0]
     const W = 248
     const left = Math.max(8, Math.min(m.x, window.innerWidth - W - 8))
@@ -177,6 +177,61 @@
         <button role="menuitem" class="sc-mi" data-click="sched.setWeek" data-b="EARLY"><span class="sc-mi-ic"></span>Early all week</button>
         <button role="menuitem" class="sc-mi" data-click="sched.setWeek" data-b="LATE"><span class="sc-mi-ic"></span>Late all week</button>
         <button role="menuitem" class="sc-mi" data-click="sched.setWeek" data-b="CLEAR"><span class="sc-mi-ic"></span><span class="stack" style="gap:0"><span>Usual shift all week</span><span class="small muted">Carry last week's, or Scope's plan</span></span></button>`}
+    </div>`
+  }
+  // ---------- Set shifts for any span (lead, 2026-11-27) ----------
+  // A small month calendar: pick a person, a shift and a range of days (click the first day,
+  // then the last). Weekdays in the range get that shift for the day; weekends follow the
+  // Proci rota. Anyone can do it for anyone; the person is told in their bell.
+  const rng = () => S.ui('sched:range', () => ({ open: false, who: null, shift: 'EARLY', from: null, to: null, month: R().today().slice(0, 7) }))
+  function rangeModal() {
+    const u = rng()
+    if (!u.open) return ''
+    const me = qm.me()
+    const who = u.who || (me && me.soeid)
+    const [y, mo] = u.month.split('-').map(Number)
+    const first = new Date(y, mo - 1, 1)
+    const startPad = (first.getDay() + 6) % 7
+    const daysIn = new Date(y, mo, 0).getDate()
+    const iso = (d) => `${y}-${String(mo).padStart(2, '0')}-${String(d).padStart(2, '0')}`
+    const lo = u.from && u.to ? (u.from < u.to ? u.from : u.to) : u.from
+    const hi = u.from && u.to ? (u.from < u.to ? u.to : u.from) : u.from
+    let n = 0; if (lo) for (let d = lo; d <= hi; d = R().addDays(d, 1)) if (!isWeekendDay(d)) n++
+    const monthLabel = first.toLocaleDateString([], { month: 'long', year: 'numeric' })
+    const quick = [['This week', R().mondayOf(R().today()), R().addDays(R().mondayOf(R().today()), 4)], ['Next week', R().addDays(R().mondayOf(R().today()), 7), R().addDays(R().mondayOf(R().today()), 11)],
+      ['Rest of this month', R().today(), (() => { const t = R().parse(R().today()); const d = new Date(t.getFullYear(), t.getMonth() + 1, 0); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })()], ['Next month', (() => { const d = new Date(y, mo, 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01` })(), (() => { const d = new Date(y, mo + 1, 0); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` })()]]
+    S.modal({
+      title: 'Set shifts', sub: 'Pick the person, the shift and the days. Weekends follow the Proci rota.', onClose: 'sched.rangeClose',
+      body: html`<div class="stack lg rg">
+        <div class="form-grid">
+          <label class="field"><span>Who</span><select class="in" data-change="sched.rangeWho">${qm.roster.filter((p) => p.active !== false).map((p) => html`<option value="${p.soeid}" ${attrs({ selected: p.soeid === who })}>${p.name}${me && p.soeid === me.soeid ? ' (you)' : ''}</option>`)}</select></label>
+          <div class="field"><span>Shift</span>${S.seg([{ id: 'EARLY', label: 'Early' }, { id: 'LATE', label: 'Late' }, { id: 'CLEAR', label: 'Usual' }], u.shift, 'sched.rangeShift')}</div>
+        </div>
+        <div class="rg-cal">
+          <div class="row"><button class="btn ghost sm" data-click="sched.rangeMonth" data-v="-1" aria-label="Previous month">${icon('chevL', 14)}</button><b class="rg-month">${monthLabel}</b><button class="btn ghost sm" data-click="sched.rangeMonth" data-v="1" aria-label="Next month">${icon('chevR', 14)}</button></div>
+          <div class="rg-grid">${['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'].map((d) => html`<span class="rg-dow">${d}</span>`)}
+            ${Array.from({ length: startPad }, () => html`<span></span>`)}
+            ${Array.from({ length: daysIn }, (_, i) => { const d = iso(i + 1); const inR = lo && d >= lo && d <= hi; const edge = d === lo || d === hi; return html`<button class="${cls('rg-day', inR && 'in', edge && 'edge', isWeekendDay(d) && 'we', d === R().today() && 'today')}" data-click="sched.rangeDay" data-v="${d}">${i + 1}</button>` })}
+          </div>
+          <div class="row tight small">${quick.map(([l, a, b]) => html`<button class="btn sm" data-click="sched.rangeQuick" data-a="${a}" data-b="${b}">${l}</button>`)}</div>
+        </div>
+        <div class="small muted">${lo ? html`<b>${R().fmtDay(lo, { day: 'numeric', month: 'short' })}${hi !== lo ? ` – ${R().fmtDay(hi, { day: 'numeric', month: 'short' })}` : ''}</b> · ${n} weekday${n === 1 ? '' : 's'}${me && who !== me.soeid ? ` · ${nameOf(who).split(' ')[0]} will be notified` : ''}` : 'Click the first day, then the last.'}</div>
+      </div>`,
+      footer: html`<button class="btn ghost" data-click="sched.rangeClose">Cancel</button><button class="btn primary" data-click="sched.rangeSave" ${attrs({ disabled: !lo || !n })}>${u.shift === 'CLEAR' ? 'Back to usual' : `Set ${u.shift === 'EARLY' ? 'Early' : 'Late'}`}${n ? ` for ${n} day${n === 1 ? '' : 's'}` : ''}</button>`,
+    })
+    return ''
+  }
+
+  // Above the table: "This week's Proci" and a dropdown of which week the table shows.
+  function prociStrip(days, week) {
+    const thisWk = R().mondayOf(R().today())
+    const opts = Array.from({ length: 17 }, (_, i) => R().addDays(thisWk, 7 * (i - 4)))
+    if (!opts.includes(week)) opts.push(week)
+    const label = week === thisWk ? "This week's Proci" : `Proci · week of ${R().fmtDay(week, { day: 'numeric', month: 'short' })}`
+    return html`<div class="row ps-head">
+      <b class="ps-h">${label}</b>
+      <select class="in sm" aria-label="Which week" data-change="sched.weekSel">${opts.sort().map((w) => html`<option value="${w}" ${attrs({ selected: w === week })}>Week of ${R().fmtDay(w, { day: 'numeric', month: 'short', year: 'numeric' })}${w === thisWk ? ' (this week)' : ''}</option>`)}</select>
+      <span class="spacer"></span>${R().pqControls(R().pqState())}
     </div>`
   }
   function schedulePanel() {
@@ -201,7 +256,7 @@
         ${inQueue && html`<span class="pq-n">${i + 1}</span>`}
         <span class="stack" style="gap:1px;min-width:0">
           <span class="nowrap">${p.name}${me && p.soeid === me.soeid && html` <span class="muted small">(you)</span>`}</span>
-          ${inQueue ? html`<span class="small muted nowrap">${nowP === p.soeid ? html`<span class="pill W-pill">Proci this week</span> · ` : ''}Proci wk of ${R().fmtDay(wk, { day: 'numeric', month: 'short' })}</span>` : html`<span class="small muted">Not in the Proci queue</span>`}
+          ${inQueue ? html`<span class="small muted nowrap">${nowP === p.soeid ? 'Proci this week' : `Next Proci: week of ${R().fmtDay(wk, { day: 'numeric', month: 'short' })}`}</span>` : ''}
         </span>
         <span class="spacer"></span>
         ${lead && (inQueue ? html`<span class="pq-act">
@@ -228,22 +283,19 @@
           <button class="btn ghost sm" data-click="sched.week" data-v="${R().addDays(u.week, 7)}" aria-label="Next week">${icon('chevR', 15)}</button>
           ${u.week !== R().mondayOf(R().today()) && html`<button class="btn ghost sm" data-click="sched.week" data-v="${R().mondayOf(R().today())}">This week</button>`}
           <span class="spacer"></span>
-          <span class="muted small">Proci <b>${R().procOf(u.week) ? nameOf(R().procOf(u.week)) : 'not set'}</b></span>
+          <button class="btn sm primary" data-click="sched.rangeOpen">${icon('cal', 14)}Set shifts</button>
         </div>
         <div class="card-b stack" style="gap:10px">
-          <div class="sc-help">
-            <span class="ink2">${icon('edit', 14)} <b>Click ${lead ? 'any day' : 'one of your days'}</b> to change the shift or add leave.${lead ? ' The menu also sets a whole week.' : ` Each weekday needs at least ${mn.early} on Early and ${mn.late} on Late.`}</span>
-            <span class="sc-legend small muted">
-              <span><span class="ev E sc-chip sm">Early</span> <span class="ev L sc-chip sm">Late</span> <span class="ev PL sc-chip sm">Leave</span> shifts</span>
-              <span><span class="sc-role">${icon('shield', 11)}Main Proci</span> <span class="sc-role">${icon('shield', 11)}Backup</span> from the Proci rota</span>
-              <span><i class="sc-dot"></i> changed for that day only</span>
-            </span>
-          </div>
-          ${R().pqControls(st)}
+          ${prociStrip(days, u.week)}
         </div>
         <div class="tbl-wrap tbl-scroll" data-scroll="sched.scroll"><table class="tbl sched-real">
-          <thead><tr><th>Analyst</th>${days.map((d, i) => html`<th class="${cls(d === R().today() && 'today')}">${WD[i]} <span class="muted">${R().fmtDay(d, { day: 'numeric' })}</span></th>`)}</tr></thead>
-          <tbody>${inQ.map((p, i) => html`<tr data-key="${p.soeid}" class="${cls('pq-tr', qu.drag === p.soeid && 'dragging', qu.over === p.soeid && qu.drag && qu.drag !== p.soeid && 'over', nowP === p.soeid && 'now')}"
+          <thead><tr><th>Analyst</th>${days.map((d, i) => html`<th class="${cls(d === R().today() && 'today')}">${WD[i]} <span class="muted">${R().fmtDay(d, { day: 'numeric' })}</span>${d === R().today() ? html` <span class="sc-today">Today</span>` : ''}</th>`)}</tr></thead>
+          <tbody>
+            ${[['main', 'Main Proci'], ['backup', 'Proci Backup'], ['weekend', 'Weekend Support']].map(([k, label]) => html`<tr class="sc-role-row" data-key="role-${k}">
+              <td class="sc-name"><span class="sc-role-l">${icon('shield', 12)}${label}</span></td>
+              ${days.map((d) => { const r = R().dayRoles(d); const s2 = (k === 'weekend') === isWeekendDay(d) ? r[k] : null; return html`<td class="${cls('sc-td', d === R().today() && 'today')}">${s2 ? html`<span class="sc-who">${nameOf(s2).split(' ')[0]}</span>` : html`<span class="muted small">—</span>`}</td>` })}</tr>`)}
+            <tr class="pq-sep"><td colspan="${days.length + 1}">Shifts</td></tr>
+            ${inQ.map((p, i) => html`<tr data-key="${p.soeid}" class="${cls('pq-tr', qu.drag === p.soeid && 'dragging', qu.over === p.soeid && qu.drag && qu.drag !== p.soeid && 'over', nowP === p.soeid && 'now')}"
               ${attrs({ draggable: lead ? 'true' : null })} data-v="${p.soeid}" data-dragstart="rota.qDragStart" data-dragover="rota.qDragOver" data-drop="rota.qDrop" data-dragend="rota.qDragEnd">
             ${nameCell(p, i)}
             ${days.map((d) => cell(p, d, lead))}</tr>`)}
@@ -253,6 +305,7 @@
         </table></div>
       </div>
       ${cellMenu(lead)}
+      ${rangeModal()}
       ${R().leaveCard()}
     </div>`
   }
@@ -411,6 +464,24 @@
 
   // ---------- Roster & access (real) ----------
   // data/roster.json on the host is the source; Scope reads it, it doesn't edit it.
+  // Team roster → In queue (lead, 2026-11-27): a switch per person for today's hand-out, and
+  // a ticket limit when it's on. Signed in = in automatically; on leave = out.
+  function queueCell(p, day, can) {
+    const q = S.queue.inQueueToday(p, day)
+    const given = S.queue.givenToday(p.soeid)
+    const sub = q.why === 'leave' ? 'On leave' : q.why === 'signed' ? 'Automatic: signed in' : q.why === 'toggle' ? `${q.ok ? 'Switched on' : 'Switched off'} by ${nameOf(q.set.by).split(' ')[0]}` : q.scheduled ? 'Not signed in yet' : 'Not scheduled today'
+    const locked = !can || q.why === 'leave' || q.why === 'signed'
+    return html`<div class="rq">
+      <label class="${cls('switch', locked && 'locked')}" title="${sub}">
+        <input type="checkbox" role="switch" ${attrs({ checked: q.ok, disabled: locked })} data-change="sched.queue" data-s="${p.soeid}" aria-label="${p.name} in today's queue">
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </label>
+      <span class="rq-sub small muted">${sub}</span>
+      ${q.ok && html`<label class="rq-limit small"><span class="muted">Limit</span>
+        <input class="in sm num" type="number" min="1" step="1" placeholder="—" value="${q.limit || ''}" ${attrs({ disabled: !can })} data-change="sched.queueLimit" data-s="${p.soeid}" aria-label="${p.name}'s ticket limit today">
+        <span class="${cls('muted', q.limit && given >= q.limit && 'crit-ink')}" title="Given today (INC + 3-Strike)">${given}${q.limit ? ` / ${q.limit}` : ''}</span></label>`}
+    </div>`
+  }
   function rosterPanel() {
     const me = qm.me()
     const lead = me && me.accessRole === 'Lead'
@@ -419,6 +490,8 @@
     const Qv = S.queue ? S.queue.view() : { tickets: [] }
     const all = qm.roster.slice().sort((a, b) => (a.active === false) - (b.active === false) || a.name.localeCompare(b.name))
     const active = all.filter((p) => p.active !== false)
+    const r0 = R().dayRoles(today)
+    const canQueue = lead || (me && [r0.main, r0.backup, r0.weekend].includes(me.soeid))
     return html`<div class="stack" style="gap:16px">
       <section class="grid g-kpi">
         ${S.kpi({ label: 'Active people', icon: 'team', value: active.length, foot: `${active.filter((p) => p.accessRole === 'Lead').length} leads · ${all.length - active.length} inactive` })}
@@ -427,15 +500,17 @@
         ${S.kpi({ label: 'Open tickets on people', icon: 'alert', tone: 'navy', value: Qv.tickets.filter((t) => S.queue.isOpen(t) && S.queue.owner(t)).length })}
       </section>
       <div class="card">
-        <div class="card-h"><h3>Team roster</h3><span class="muted small">From <span class="code-chip">data\roster.json</span> on the host${lead ? '. To add someone, change an access role or mark a leaver, edit that file and reload.' : ''}</span></div>
+        <div class="card-h"><h3>Team roster</h3><span class="muted small">From <span class="code-chip">data\\roster.json</span> on the host${lead ? '. To add someone, change an access role or mark a leaver, edit that file and reload.' : ''}</span><span class="spacer"></span>
+          <span class="rs-legend small muted"><span><span class="rs-dot on"></span>Online, in queue</span><span><span class="rs-dot queued"></span>In queue, not signed in</span><span><span class="rs-dot"></span>Offline</span></span></div>
         <div class="tbl-wrap"><table class="tbl">
-          <thead><tr><th>Name</th><th>SOEID</th><th>Access</th><th>Today</th><th>Signed in</th><th class="r">Handled today</th><th class="r">Open now</th></tr></thead>
+          <thead><tr><th>Name</th><th>SOEID</th><th>Access</th><th>Today</th><th>Signed in</th><th title="Who gets tickets today. Signed in: in the queue automatically. Not signed in yet: out until a lead or the day's Proci switches them on. On leave: never. Limit: the most tickets they get today.">In queue</th><th class="r">Handled today</th><th class="r">Open now</th></tr></thead>
           <tbody>${all.map((p) => { const pl = planFor(p.soeid, today); const pr = pres.get(p.soeid); const l = S.queue ? S.queue.loadToday(p.soeid) : { total: 0 }; return html`<tr data-key="${p.soeid}" class="${cls(p.active === false && 'muted')}">
-            <td class="nowrap">${p.name}${p.active === false && html` <span class="pill">Inactive</span>`}</td>
+            <td class="nowrap">${(() => { if (p.active === false) return html`<span class="rs-dot" title="Inactive"></span>`; const q = S.queue.inQueueToday(p, today); const st = q.ok && q.signedIn ? ['on', 'Online and in the queue'] : q.ok ? ['queued', 'In the queue, not signed in yet'] : q.why === 'leave' ? ['', 'On leave'] : ['', q.signedIn ? 'Signed in, out of the queue' : 'Offline, not in the queue']; return html`<span class="${cls('rs-dot', st[0])}" title="${st[1]}" aria-label="${st[1]}"></span>` })()}${p.name}${p.active === false && html` <span class="pill">Inactive</span>`}</td>
             <td class="mono small">${p.soeid}</td>
             <td><span class="${cls('pill', p.accessRole === 'Lead' && 'accent')}">${p.accessRole === 'Lead' ? 'Lead' : 'Analyst'}</span></td>
             <td class="small">${p.active === false ? '—' : pl.role === 'LEAVE' ? 'On leave' : pl.role === 'REST' ? 'Rest day' : pl.off ? 'Off' : html`${pl.shift ? S.shiftLabel(pl.shift) : 'Shift not set'}${pl.role && pl.role !== 'ANALYST' ? ` · ${S.dutyLabel(pl.role)}` : ''}`}</td>
             <td class="nowrap small">${pr ? html`<span class="mono">${S.fmtTime(pr.firstAt)}</span>` : html`<span class="muted">—</span>`}</td>
+            <td>${p.active === false ? html`<span class="muted">—</span>` : queueCell(p, today, canQueue)}</td>
             <td class="r">${l.total}</td>
             <td class="r">${Qv.tickets.filter((t) => S.queue.isOpen(t) && S.queue.owner(t) === p.soeid).length}</td></tr>` })}</tbody>
         </table></div>
@@ -537,6 +612,16 @@
       const push = (kind, title, sub) => out.push({ id: `ev|${ev.seq}`, group: 'update', kind, tone: 'accent', title, sub, at: ev.at, ...sched })
       if (e.type === 'leaveAdd') push('leave', ev.by === e.soeid ? `${who} added leave: ${fd(e.from)}${e.from !== e.to ? ` – ${fd(e.to)}` : ''}` : `${who} added leave for ${first(e.soeid)}: ${fd(e.from)}${e.from !== e.to ? ` – ${fd(e.to)}` : ''}`, e.note || '')
       else if (e.type === 'leaveCancel') push('leave', `${who} cancelled a leave`, '')
+      else if (e.type === 'shiftDaySet' && e.soeid === me.soeid) {
+        // Someone else changed MY shift: one notification per range they set.
+        const key = `mine|${ev.by}|${e.range || e.day}|${e.shift}`
+        if (!bursts.has(key)) { bursts.set(key, 1); const [a, b] = String(e.range || `${e.day}|${e.day}`).split('|'); out.push({ id: `ev|${ev.seq}`, group: 'action', kind: 'shift', tone: 'accent', title: `${who} set your shift to ${e.shift ? S.shiftLabel(e.shift) : 'your usual one'}`, sub: a === b ? fd(a) : `${fd(a)} – ${fd(b)}`, at: ev.at, ...sched }) }
+      }
+      else if (e.type === 'queueSet' && e.day === today) push('shift', e.on === true ? `${who} put ${first(e.soeid)} in today's queue` : e.on === false ? `${who} took ${first(e.soeid)} out of today's queue` : `${who} set ${first(e.soeid)}'s ticket limit${e.limit ? ` to ${e.limit}` : ' off'}`, '')
+      else if (e.type === 'ticketsImported' && (e.queue || 'inc') === 'inc' && (e.part || 1) === 1 && ev.at > now - 12 * 3600e3) {
+        const mine = (S.queue ? S.queue.view().tickets : []).filter((t) => t.to === me.soeid && t.assignedAt >= ev.at && t.assignedAt < ev.at + 5 * 60e3).length
+        push('assign', `${who} loaded the ServiceNow export: ${e.total || 0} tickets`, mine ? `${mine} handed to you` : 'Shared out equally among everyone in the queue')
+      }
       else if (e.type === 'rotaOrderSet') push('rota', `${who} changed the Proci order from the week of ${fw(e.from)}`, (e.order || []).map(first).join(' → '))
       else if (e.type === 'rotaSet') push('rota', e.soeid ? `${who} made ${first(e.soeid)} the Proci for the week of ${fw(e.week)}` : `${who} put the week of ${fw(e.week)} back to the Proci order`, '')
       else if (e.type === 'shiftStart' && e.edited) push('shift', `${who} changed today's role or shift: ${S.dutyLabel(e.duty)} · ${S.shiftLabel(e.shift)}`, e.reason || '')
@@ -610,6 +695,35 @@
 
   S.on({
     'sched.week': (el) => S.set(ui(), { week: el.dataset.v }),
+    'sched.weekSel': (el) => S.set(ui(), { week: el.value }),
+    'sched.rangeOpen': () => { const me = qm.me(); S.set(rng(), { open: true, who: me && me.soeid, from: null, to: null, month: R().today().slice(0, 7) }) },
+    'sched.rangeClose': () => S.set(rng(), { open: false }),
+    'sched.rangeWho': (el) => S.set(rng(), { who: el.value }),
+    'sched.rangeShift': (el) => S.set(rng(), { shift: el.dataset.v }),
+    'sched.rangeMonth': (el) => { const u = rng(); const [y, m] = u.month.split('-').map(Number); const d = new Date(y, m - 1 + Number(el.dataset.v), 1); S.set(u, { month: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` }) },
+    'sched.rangeDay': (el) => { const u = rng(); const d = el.dataset.v; if (!u.from || u.to) S.set(u, { from: d, to: null }); else S.set(u, { to: d }) },
+    'sched.rangeQuick': (el) => S.set(rng(), { from: el.dataset.a, to: el.dataset.b, month: el.dataset.a.slice(0, 7) }),
+    'sched.rangeSave': async () => {
+      const u = rng()
+      const lo = u.to && u.to < u.from ? u.to : u.from; const hi = u.to ? (u.to < u.from ? u.from : u.to) : u.from
+      const who = u.who || qm.me().soeid
+      const shift = u.shift === 'CLEAR' ? null : u.shift
+      let n = 0
+      for (let d = lo; d <= hi; d = R().addDays(d, 1)) { if (isWeekendDay(d)) continue; if (!(await qm.send({ type: 'shiftDaySet', day: d, soeid: who, shift, range: `${lo}|${hi}` }))) break; n++ }
+      S.set(u, { open: false })
+      S.dispatch({ type: 'toast', text: `${nameOf(who).split(' ')[0]}: ${shift ? S.shiftLabel(shift) : 'usual shift'} on ${n} day${n === 1 ? '' : 's'}${qm.me().soeid !== who ? ' · they\'ll see it in their bell' : ''}` })
+    },
+    'sched.queue': async (el) => {
+      const day = R().today(); const set = S.queue.view().inQueue.get(`${day}|${el.dataset.s}`)
+      if (await qm.send({ type: 'queueSet', day, soeid: el.dataset.s, on: el.checked, limit: set ? set.limit : null })) S.dispatch({ type: 'toast', text: `${nameOf(el.dataset.s)} ${el.checked ? 'is in' : 'is out of'} today's queue` })
+      else S.render()
+    },
+    'sched.queueLimit': async (el) => {
+      const day = R().today(); const set = S.queue.view().inQueue.get(`${day}|${el.dataset.s}`)
+      const n = Math.floor(Number(el.value)); const limit = el.value === '' || !(n > 0) ? null : n
+      if (await qm.send({ type: 'queueSet', day, soeid: el.dataset.s, on: set ? set.on : null, limit })) S.dispatch({ type: 'toast', text: limit ? `${nameOf(el.dataset.s)}: at most ${limit} ticket${limit === 1 ? "" : "s"} today` : `${nameOf(el.dataset.s)}: no limit today` })
+      else S.render()
+    },
     'sched.menu': (el) => {
       const u = ui()
       const same = S.pop === 'scmenu' && u.menu && u.menu.s === el.dataset.s && u.menu.d === el.dataset.d

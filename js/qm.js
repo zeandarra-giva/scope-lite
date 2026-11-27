@@ -108,11 +108,12 @@
       const [r1, r2] = await Promise.all([fetch('api/roster', { cache: 'no-store' }), fetch('api/ops', { cache: 'no-store' })])
       for (const r of [r1, r2]) if (!r.ok) throw new Error(r.status === 404 ? 'this server is an older version. Restart it with run.bat or share.bat' : (await r.text()) || `server answered ${r.status}`)
       qm.roster = await r1.json()
+      if (S.useRoster) S.useRoster(qm.roster) // the real team replaces the placeholder one everywhere
       qm.events = await r2.json()
       qm.entries = fold(qm.events)
       Object.assign(qm, { online: true, error: null, loadedAt: Date.now() })
     } catch (err) {
-      qm.error = qm.online ? 'Lost the connection to the Scope Lite server. Check that its window is still open.' : `Couldn't load Queue Management: ${err.message}`
+      qm.error = qm.online ? 'Lost the connection to the Scope Lite server. Check that its window is still open.' : `Couldn't load My queue: ${err.message}`
       if (qm.online === null) qm.online = false
     }
     S.render()
@@ -356,14 +357,14 @@
 
   S.pages.qm = function qmPage() {
     const u = page()
-    if (location.protocol === 'file:') return notice('warn', 'info', html`<b>Queue Management works on real team data, so it needs the Scope Lite server.</b> Close this tab and start Scope with <span class="code-chip">run.bat</span> (or <span class="code-chip">share.bat</span> for the team).`)
+    if (location.protocol === 'file:') return notice('warn', 'info', html`<b>My queue works on real team data, so it needs the Scope Lite server.</b> Close this tab and start Scope with <span class="code-chip">run.bat</span> (or <span class="code-chip">share.bat</span> for the team).`)
     if (qm.online === null) return html`<div class="card"><div class="card-b empty">Loading…</div></div>`
     if (!qm.loadedAt) return notice('crit', 'alert', qm.error, html`<button class="btn sm" data-click="qm.reload">${icon('refresh', 14)}Retry</button>`)
     if (!qm.roster.length) return notice('warn', 'team', html`<b>No team roster yet.</b> The lead copies <span class="code-chip">data\\roster.example.json</span> to <span class="code-chip">data\\roster.json</span> on the host, fills in the team (SOEID, name, Lead or Analyst), then reloads this page.`)
     const m = me()
-    if (!m) return notice('warn', 'user', html`<b>Queue Management needs your name from the team roster.</b> Log out, then sign in and pick your name.`, html`<button class="btn sm" data-click="app.profile" data-v="logout">${icon('logout', 14)}Log out</button>`)
+    if (!m) return notice('warn', 'user', html`<b>My queue needs your name from the team roster.</b> Log out, then sign in and pick your name.`, html`<button class="btn sm" data-click="app.profile" data-v="logout">${icon('logout', 14)}Log out</button>`)
 
-    const tab = ['mine', 'strike'].includes(u.tab) ? u.tab : 'tickets'
+    const tab = ['mine', 'strike', 'eod'].includes(u.tab) ? u.tab : 'tickets'
     const mine = qm.entries.filter((x) => x.by === m.soeid)
     const from = startOfMonth()
     drawers(m)
@@ -375,14 +376,16 @@
       ${qm.error && notice('crit', 'alert', qm.error, html`<button class="btn sm" data-click="qm.reload">${icon('refresh', 14)}Retry</button>`)}
       <div class="grid g-kpi">
         ${S.kpi({ label: 'Handled today', icon: 'check', tone: 'good', value: handled.total, foot: `${handled.tickets} tickets · ${handled.manual} verified manual` })}
-        ${S.kpi({ label: 'Still open on me', icon: 'clock', tone: 'sky', value: myOpen, foot: 'Still to work (On Hold ones are in 3-Strike)', extra: { 'data-click': 'qm.tab', 'data-v': 'tickets', style: 'cursor:pointer' } })}
+        ${S.kpi({ label: 'Still open on me', icon: 'clock', tone: 'sky', value: myOpen, foot: 'Still to work (On Hold ones wait on the user)', extra: { 'data-click': 'qm.tab', 'data-v': 'tickets', style: 'cursor:pointer' } })}
         ${S.kpi({ label: 'Manual entries verified', icon: 'shield', tone: 'navy', value: mine.filter((x) => verifiedAt(x) >= from).length, foot: `This month · ${mine.filter((x) => x.status === 'Pending').length} waiting for a lead` })}
       </div>
       ${S.tabs([
         { id: 'tickets', label: 'My tickets', icon: 'user', count: myOpen },
         { id: 'strike', label: '3-Strike', icon: 'clock', count: S.strike.pendingFor(m) },
         { id: 'mine', label: 'My manual entries', icon: 'doc', count: mine.length },
+        { id: 'eod', label: 'End of day', icon: 'chart' },
       ], tab, 'qm.tab')}
+      ${tab === 'eod' && S.eod.myTab(m)}
       ${tab === 'tickets' && Q.myTickets(m)}
       ${tab === 'strike' && S.strike.analystTab(m)}
       ${tab === 'mine' && html`<div class="stack" style="gap:12px">

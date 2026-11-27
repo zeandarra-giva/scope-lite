@@ -536,7 +536,7 @@ function lostDeepDive(c, R) {
   const rows = window30(state, now)
   R.step('get_metrics', 'lost, by group and app, 30d', `${rows.length} tickets`)
   R.src({ kind: 'metric', id: 'history', label: 'Ticket history', sub: '30 days' })
-  R.p(`Average lost time (EZE minus RES: waiting before or between work) is **${fmtH(MEASURES.lost.fn(rows))}** over ${rows.length} tickets.`)
+  R.p(`Average lost time (E2E minus RES: waiting before or between work) is **${fmtH(MEASURES.lost.fn(rows))}** over ${rows.length} tickets.`)
   R.table(['Business app', 'Avg lost time', 'Tickets'], aggregate(rows, 'businessApp', 'lost').slice(0, 5).map((d) => [d.label, fmtH(d.value), String(d.n)]))
   const backlog = rows.filter((h) => h.breachCode === 'BR-03').length
   if (backlog) R.p(`${backlog} ticket${backlog > 1 ? 's' : ''} breached because of queue backlog (BR-03). Check the shift rota for gaps at the busiest hours.`)
@@ -674,7 +674,7 @@ function computeInsights(state, now = state.now) {
     id: 'lost', kind: 'lost', tone: lost > 2 ? 'warn' : 'good', icon: 'pause', source: 'Ticket history · 30 days',
     stat: fmtH(lost), statLabel: 'avg lost',
     title: lost > 2 ? 'Lost time is above the 2h threshold' : 'Lost time is within the 2h threshold',
-    detail: 'Lost time is EZE minus RES: how long tickets wait before or between work.',
+    detail: 'Lost time is E2E minus RES: how long tickets wait before or between work.',
     prompt: 'Where are we losing the most time before tickets are worked?',
   })
 

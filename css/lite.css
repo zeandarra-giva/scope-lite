@@ -344,3 +344,32 @@ button.sc-cell:hover .sc-edit, button.sc-cell.open .sc-edit, button.sc-cell:focu
 .sc-mi.on { color: var(--accent); }
 .sc-mi-ic { width: 16px; flex: none; display: inline-flex; }
 .dist-sub { display: block; font-size: 11.5px; }
+
+/* Queues (Team settings) and 3-Strike windows */
+.queue-row { display: grid; grid-template-columns: minmax(150px, 1.2fr) minmax(180px, 1.6fr) 140px 140px 120px auto auto; gap: 10px; align-items: end; padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.queue-row:last-of-type { border-bottom: 0; }
+.queue-row .qm-err { grid-column: 1 / -1; }
+.queue-row .queue-allday { grid-column: 3 / -1; padding-bottom: 9px; }
+.queue-on { padding-bottom: 9px; }
+@media (max-width: 900px) { .queue-row { grid-template-columns: 1fr 1fr; } .queue-row .queue-allday { grid-column: 1 / -1; } }
+.strike-win + .strike-win { padding-top: 14px; border-top: 1px solid var(--line); }
+.crit-ink { color: var(--crit); }
+.strike-tbl { table-layout: fixed; width: 100%; }
+.strike-tbl td { overflow: hidden; text-overflow: ellipsis; }
+.strike-tbl .strike-who { width: 100%; min-width: 0; }
+.eod-tbl th.eod-q { white-space: normal; line-height: 1.25; }
+.eod-tbl td, .eod-tbl th { padding-left: 8px; padding-right: 8px; }
+.home-cols .strike-tbl, .home-cols .eod-tbl { min-width: 0; }
+.eod-tbl th.eod-group { text-align: center; border-bottom: 1px solid var(--line); }
+.eod-tbl td { vertical-align: top; }
+
+/* My tickets: ticket number with its description in one cell */
+.qm-tbl .qm-tcell { max-width: 420px; }
+.qm-tbl .qm-tcell .qm-tdesc { display: block; }
+/* Ticket Explorer → Ticket history */
+.drawer.xh-drawer { width: min(860px, calc(100vw - 24px)); }
+.xh-sum { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; }
+.xh-k { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; }
+.xh-k b { font-size: 18px; font-variant-numeric: tabular-nums; }
+.xh-tl td.r, .xh-tl th.r { text-align: right; font-variant-numeric: tabular-nums; }
+.xh-end td { border-top: 2px solid var(--line); }

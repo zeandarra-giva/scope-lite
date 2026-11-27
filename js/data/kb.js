@@ -12,7 +12,8 @@ const DATA_SOURCES = ['Manual', 'ServiceNow CMDB']
 // Pages untouched for this long are flagged for review.
 const REVIEW_AFTER_DAYS = 180
 
-const lead = 'Andrea Santos'
+const who = (i) => S.ANALYSTS[i].name
+const lead = who(0)
 const pub = (daysAgo, version = 1, by = lead) => ({ version, at: NOW - daysAgo * DAY, by })
 
 function page(p) {
@@ -84,7 +85,7 @@ Internal hostnames fail to resolve, or resolve to an old address after a migrati
 Teams audio dropping for a whole floor is often the same stale record on the floor resolver.`,
     }),
     page({
-      id: 'p-rb201', folderId: 'f-run', kind: 'Runbook', codes: ['IAM-LOCK-01'], title: 'RB-201 Account lockout', version: 4, daysAgo: 8, editedAgo: 0.2, editedBy: 'Bea Mendoza',
+      id: 'p-rb201', folderId: 'f-run', kind: 'Runbook', codes: ['IAM-LOCK-01'], title: 'RB-201 Account lockout', version: 4, daysAgo: 8, editedAgo: 0.2, editedBy: who(2),
       body: `
 Account locked after a password change. Usually caused by a device still using the old password.
 
@@ -102,7 +103,7 @@ Account locked after a password change. Usually caused by a device still using t
 3. Ask the user to sign out of mobile mail, Okta Verify and any mapped drives, then sign in with the new password.
 4. Check the lockout source in the directory audit log if it locks again within an hour.
 5. If the source is a service account, hand over to Identity & Access Management.`,
-      review: { by: 'Bea Mendoza', at: NOW - 0.2 * DAY },
+      review: { by: who(2), at: NOW - 0.2 * DAY },
     }),
     page({
       id: 'p-rb204', folderId: 'f-run', kind: 'Runbook', codes: ['IAM-MFA-01'], title: 'RB-204 MFA re-enrolment', daysAgo: 64,
@@ -152,7 +153,7 @@ A certificate warning appears on a login page because the certificate expired or
 4. Clear the CDN cache and confirm the warning is gone.`,
     }),
     page({
-      id: 'p-rb402', folderId: 'f-run', kind: 'Runbook', codes: ['EUC-OS-01'], title: 'RB-402 Patch rollback', draftOnly: true, daysAgo: 2, by: 'Miguel Tan',
+      id: 'p-rb402', folderId: 'f-run', kind: 'Runbook', codes: ['EUC-OS-01'], title: 'RB-402 Patch rollback', draftOnly: true, daysAgo: 2, by: who(5),
       body: `
 Outlook or another app crashes on launch right after Patch Tuesday.
 
@@ -217,7 +218,7 @@ Every shift ends with a written handover. The next shift's manager acknowledges 
 - Anything unusual: outages, changes, staffing gaps`,
     }),
     page({
-      id: 'p-qref', folderId: 'f-pol', kind: 'Policy', title: 'Service Desk quick reference (2025)', daysAgo: 410, by: 'Rhea Castillo',
+      id: 'p-qref', folderId: 'f-pol', kind: 'Policy', title: 'Service Desk quick reference (2025)', daysAgo: 410, by: who(6),
       body: `
 One-page summary for new joiners.
 

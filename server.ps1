@@ -16,9 +16,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $DataDir = Join-Path $Root 'data'
+$Utf8 = New-Object System.Text.UTF8Encoding $false
+
 $DataFile = Join-Path $DataDir 'suggestions.jsonl'
 $MaxBody = 1MB # an import arrives in chunks of 150 rows
-$Utf8 = New-Object System.Text.UTF8Encoding $false
 
 if (-not (Test-Path $DataDir)) { New-Item -ItemType Directory -Path $DataDir | Out-Null }
 if (-not (Test-Path $DataFile)) { [System.IO.File]::WriteAllText($DataFile, '', $Utf8) }
@@ -31,7 +32,7 @@ if (-not (Test-Path $DataFile)) { [System.IO.File]::WriteAllText($DataFile, '', 
 $OpsFile = Join-Path $DataDir 'ops.jsonl'
 $RosterFile = Join-Path $DataDir 'roster.json'
 # Event types the ops log accepts so far, and the ones only a Lead may send.
-$OpsTypes = @('manualIncAdd', 'manualIncWithdraw', 'manualIncDecide', 'shiftStart', 'settingsSet', 'ticketsImported', 'ticketsAssigned', 'ticketTag', 'ticketNote', 'importUndo', 'rotaSet', 'leaveAdd', 'leaveCancel', 'shiftPlanSet', 'shiftDaySet', 'rotaOrderSet', 'strikeAssign', 'strikeLog', 'eodHistoryImported', 'eodHistoryUndo')
+$OpsTypes = @('manualIncAdd', 'manualIncWithdraw', 'manualIncDecide', 'shiftStart', 'settingsSet', 'ticketsImported', 'ticketsAssigned', 'ticketTag', 'ticketNote', 'ticketOpened', 'importUndo', 'rotaSet', 'leaveAdd', 'leaveCancel', 'shiftPlanSet', 'shiftDaySet', 'rotaOrderSet', 'strikeAssign', 'strikeLog', 'queuesSet', 'queueSet', 'eodHistoryImported', 'eodHistoryUndo')
 $LeadOnly = @('manualIncDecide', 'settingsSet', 'rotaSet', 'shiftPlanSet', 'rotaOrderSet', 'eodHistoryImported', 'eodHistoryUndo') # shiftDaySet: anyone for their own day (the fold checks)
 if (-not (Test-Path $OpsFile)) { [System.IO.File]::WriteAllText($OpsFile, '', $Utf8) }
 $OpsSeq = [int64]0

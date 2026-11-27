@@ -370,7 +370,7 @@
               <span class="small">${ROOT_CAUSES[f.cause].label} · ${ROOT_CAUSES[f.cause].subs[f.sub]} — ${code.title}</span>
             </div>
           </div>
-          <div class="small muted">RES MTTR will be ${fmtH((Date.now() - (ticket.assignedAt || ticket.queuedAt)) / HOUR)}, EZE MTTR ${fmtH((Date.now() - ticket.openedAt) / HOUR)}.</div>
+          <div class="small muted">RES MTTR will be ${fmtH((Date.now() - (ticket.assignedAt || ticket.queuedAt)) / HOUR)}, E2E MTTR ${fmtH((Date.now() - ticket.openedAt) / HOUR)}.</div>
         </div>`}`
 
     return S.modal({ title: 'Resolution journey', sub: `${ticket.id} · ${ticket.desc}`, onClose: 'ws.rjClose', wide: true, footer, body })

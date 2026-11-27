@@ -21,16 +21,16 @@ const between = (a, b) => a + rand() * (b - a)
 
 // ---------- People ----------
 const ANALYSTS = [
-  { id: 'a1', name: 'Andrea Santos', soeid: 'AS40211', role: 'Manager', group: 'Service Desk L2', location: 'Onsite', shift: 'Early', status: 'online', skills: ['Escalations', 'Major incidents'] },
-  { id: 'a2', name: 'Paolo Reyes', soeid: 'PR38817', role: 'Analyst', group: 'Service Desk L2', location: 'WFH', shift: 'Early', status: 'online', skills: ['Network', 'VPN'] },
-  { id: 'a3', name: 'Bea Mendoza', soeid: 'BM51024', role: 'Analyst', group: 'Service Desk L2', location: 'Onsite', shift: 'Early', status: 'online', skills: ['Identity', 'Okta'] },
-  { id: 'a4', name: 'Carlo Dizon', soeid: 'CD27390', role: 'Analyst', group: 'Apps Support', location: 'WFH', shift: 'Mid', status: 'online', skills: ['SAP', 'Payments'] },
-  { id: 'a5', name: 'Joanna Lim', soeid: 'JL60092', role: 'Analyst', group: 'Apps Support', location: 'Onsite', shift: 'Mid', status: 'online', skills: ['Salesforce', 'Integrations'] },
-  { id: 'a6', name: 'Miguel Tan', soeid: 'MT44718', role: 'Analyst', group: 'Infra Ops', location: 'WFH', shift: 'Early', status: 'online', skills: ['Windows', 'M365'] },
-  { id: 'a7', name: 'Rhea Castillo', soeid: 'RC33509', role: 'Analyst', group: 'Infra Ops', location: 'Onsite', shift: 'Late', status: 'offline', skills: ['Linux', 'Storage'] },
-  { id: 'a8', name: 'Nico Bautista', soeid: 'NB29961', role: 'Analyst', group: 'Service Desk L2', location: 'WFH', shift: 'Late', status: 'offline', skills: ['Hardware', 'Printers'] },
-  { id: 'a9', name: 'Trisha Aquino', soeid: 'TA57702', role: 'Analyst', group: 'Apps Support', location: 'Onsite', shift: 'Early', status: 'leave', skills: ['Workday'] },
-  { id: 'a10', name: 'Diego Ramos', soeid: 'DR41186', role: 'Analyst', group: 'Infra Ops', location: 'WFH', shift: 'Late', status: 'leave', skills: ['Citrix', 'VDI'] },
+  { id: 'a1', name: 'Sample Lead', soeid: 'X0000001', role: 'Manager', group: 'Service Desk L2', location: 'Onsite', shift: 'Early', status: 'online', skills: ['Escalations', 'Major incidents'] },
+  { id: 'a2', name: 'Sample Analyst 2', soeid: 'X0000002', role: 'Analyst', group: 'Service Desk L2', location: 'WFH', shift: 'Early', status: 'online', skills: ['Network', 'VPN'] },
+  { id: 'a3', name: 'Sample Analyst 3', soeid: 'X0000003', role: 'Analyst', group: 'Service Desk L2', location: 'Onsite', shift: 'Early', status: 'online', skills: ['Identity', 'Okta'] },
+  { id: 'a4', name: 'Sample Analyst 4', soeid: 'X0000004', role: 'Analyst', group: 'Apps Support', location: 'WFH', shift: 'Mid', status: 'online', skills: ['SAP', 'Payments'] },
+  { id: 'a5', name: 'Sample Analyst 5', soeid: 'X0000005', role: 'Analyst', group: 'Apps Support', location: 'Onsite', shift: 'Mid', status: 'online', skills: ['Salesforce', 'Integrations'] },
+  { id: 'a6', name: 'Sample Analyst 6', soeid: 'X0000006', role: 'Analyst', group: 'Infra Ops', location: 'WFH', shift: 'Early', status: 'online', skills: ['Windows', 'M365'] },
+  { id: 'a7', name: 'Sample Analyst 7', soeid: 'X0000007', role: 'Analyst', group: 'Infra Ops', location: 'Onsite', shift: 'Late', status: 'offline', skills: ['Linux', 'Storage'] },
+  { id: 'a8', name: 'Sample Analyst 8', soeid: 'X0000008', role: 'Analyst', group: 'Service Desk L2', location: 'WFH', shift: 'Late', status: 'offline', skills: ['Hardware', 'Printers'] },
+  { id: 'a9', name: 'Sample Analyst 9', soeid: 'X0000009', role: 'Analyst', group: 'Apps Support', location: 'Onsite', shift: 'Early', status: 'leave', skills: ['Workday'] },
+  { id: 'a10', name: 'Sample Analyst 10', soeid: 'X0000010', role: 'Analyst', group: 'Infra Ops', location: 'WFH', shift: 'Late', status: 'leave', skills: ['Citrix', 'VDI'] },
 ]
 const byId = Object.fromEntries(ANALYSTS.map((a) => [a.id, a]))
 const initials = (name) => name.split(' ').map((p) => p[0]).slice(0, 2).join('')
@@ -363,8 +363,8 @@ function seedHandovers() {
       id: `HO-${String(240 - d).padStart(4, '0')}`,
       at,
       shift: d % 2 ? 'Early → Late' : 'Late → Early',
-      by: d % 2 ? 'Andrea Santos' : 'Rhea Castillo',
-      to: d % 2 ? 'Rhea Castillo' : 'Andrea Santos',
+      by: d % 2 ? ANALYSTS[0].name : ANALYSTS[6].name,
+      to: d % 2 ? ANALYSTS[6].name : ANALYSTS[0].name,
       resolved: Math.floor(between(9, 24)),
       openCritical: Math.floor(between(0, 3)),
       notes: pick([

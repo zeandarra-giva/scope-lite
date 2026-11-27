@@ -345,7 +345,7 @@
   // reads back, so the same choices always give the same numbers.
   const T_WINDOWS = ['this week', 'last 2 weeks', 'last 30 days', 'this quarter']
   const T_PRIOS = ['all priorities', 'P1', 'P2', 'P3', 'P4']
-  const T_MEASURES = ['volume', 'MTTR', 'EZE MTTR', 'lost time', 'SLA attainment', 'FCR', 'transfer rate']
+  const T_MEASURES = ['volume', 'MTTR', 'E2E MTTR', 'lost time', 'SLA attainment', 'FCR', 'transfer rate']
   const T_RANK_DIMS = ['root causes', 'business apps', 'resolution codes', 'assignment groups', 'analysts', 'channels', 'product groups']
   const T_DIMS = ['root cause', 'business app', 'resolution code', 'assignment group', 'analyst', 'channel', 'product group', 'priority']
   const PROMPT_TEMPLATES = [

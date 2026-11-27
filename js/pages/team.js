@@ -122,7 +122,7 @@
           <div class="card-h"><h3>Holidays & weekend rota</h3></div>
           <div class="card-b stack">
             ${[
-              [state.schedule.days[11], 'Public holiday', 'Skeleton crew: Andrea, Paolo, Bea'],
+              [state.schedule.days[11], 'Public holiday', `Skeleton crew: ${people.slice(0, 3).map((a) => a.name.split(' ')[0]).join(', ')}`],
               [state.schedule.days[5], 'Weekend duty', people.filter((a) => state.schedule.sched[a.id]?.[5] === 'W').map((a) => a.name).join(', ') || 'Nobody assigned'],
               [state.schedule.days[6], 'Weekend duty', people.filter((a) => state.schedule.sched[a.id]?.[6] === 'W').map((a) => a.name).join(', ') || 'Nobody assigned'],
               [state.schedule.days[12], 'Weekend duty', people.filter((a) => state.schedule.sched[a.id]?.[12] === 'W').map((a) => a.name).join(', ') || 'Nobody assigned'],

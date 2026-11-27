@@ -16,7 +16,7 @@
 // Stored in the shared ops log: rotaOrderSet and rotaSet (lead), leaveAdd / leaveCancel
 // (the person or a lead).
 ;(function () {
-  const { html, cls, icon, seg, uid } = S
+  const { html, cls, attrs, icon, seg, uid } = S
   const qm = S.qm
   const DAY = 864e5
 
@@ -212,31 +212,31 @@
 
     return html`<section class="card cal rota-cal">
       <div class="cal-top">
-        <div class="stack" style="gap:2px"><b>Schedule calendar</b><span class="muted small">Every day's roles (from the Proci queue), who is on leave, and how many are on Early and Late. Gaps and changes also go to the bell.</span></div>
-        <span class="spacer"></span>
-        <div class="cal-status ${gapDays ? 'low' : 'ok'}" role="status">
-          <span class="cal-status-ic">${icon(gapDays ? 'alert' : 'check', 15, { stroke: 2.4 })}</span>
-          <div class="stack" style="gap:0"><b>${gapDays ? 'Coverage gaps' : 'Fully covered'}</b><span class="small muted">${gapDays ? `${gapDays} day${gapDays > 1 ? 's' : ''} this month missing a role or a shift` : 'Every day has its roles and shifts'}</span></div>
-        </div>
-      </div>
-
-      <div class="brush-bar">
-        ${lead && seg([{ id: 'proci', label: html`${icon('swap', 13)} Set Proci` }, { id: 'leave', label: html`${icon('cal', 13)} Add leave` }], mode, 'rota.calMode')}
-        <div class="brush-people" role="radiogroup" aria-label="${mode === 'proci' ? 'Proci to place' : 'Whose leave'}">
-          ${(lead ? people : people.filter((p) => me && p.soeid === me.soeid)).map((p) => html`<button class="${cls('brush', who === p.soeid && 'on')}" role="radio" aria-checked="${who === p.soeid}" data-click="rota.calWho" data-v="${p.soeid}"><span class="ev-av">${ini(p.soeid)}</span>${p.name.split(' ')[0]}</button>`)}
-          ${mode === 'proci' && html`<button class="${cls('brush', who === '' && 'on')}" role="radio" aria-checked="${who === ''}" data-click="rota.calWho" data-v="">${icon('x', 13)}Queue order</button>`}
-        </div>
-        ${mode === 'leave' && html`<input class="in brush-note" maxlength="120" value="${u.note}" data-input="rota.calNote" placeholder="Note (optional), e.g. vacation" aria-label="Leave note">`}
-      </div>
-      <div class="row small"><span class="${cls(u.lvStart || who ? 'ink2' : 'muted')}">${icon('bolt', 13)} ${hint}</span>${u.lvStart && html`<button class="btn ghost sm" data-click="rota.calCancel">Cancel</button>`}</div>
-
-      <div class="cal-head">
-        <h2>${fmtDay(first1, { month: 'long', year: 'numeric' })}</h2>
-        <span class="spacer"></span>
+        <h2 class="cal-title">${fmtDay(first1, { month: 'long', year: 'numeric' })}</h2>
         ${first1 !== t.slice(0, 8) + '01' && html`<button class="btn sm" data-click="rota.calMonth" data-v="${t.slice(0, 8)}01">Today</button>`}
         <button class="cal-nav" data-click="rota.calMonth" data-v="${iso(new Date(parse(first1).getFullYear(), mon - 1, 1))}" aria-label="Previous month">${icon('chevL', 16)}</button>
         <button class="cal-nav" data-click="rota.calMonth" data-v="${iso(new Date(parse(first1).getFullYear(), mon + 1, 1))}" aria-label="Next month">${icon('chevR', 16)}</button>
+        <span class="${cls('pill', gapDays ? 'crit' : 'good')}" title="${gapDays ? `${gapDays} day${gapDays > 1 ? 's' : ''} this month missing a role or a shift` : 'Every day has its roles and shifts'}">${icon(gapDays ? 'alert' : 'check', 12, { stroke: 2.4 })}${gapDays ? `${gapDays} gap day${gapDays > 1 ? 's' : ''}` : 'Fully covered'}</span>
+        <span class="spacer"></span>
+        <select class="in sm cal-who" aria-label="${mode === 'proci' ? 'Proci to place' : 'Whose leave'}" data-change="rota.calWhoSel">
+          <option value="__none" ${attrs({ selected: who === null || who === undefined })}>${mode === 'proci' ? 'Pick a person' : 'Whose leave'}</option>
+          ${(lead ? people : people.filter((p) => me && p.soeid === me.soeid)).map((p) => html`<option value="${p.soeid}" ${attrs({ selected: who === p.soeid })}>${p.name}</option>`)}
+          ${mode === 'proci' && html`<option value="" ${attrs({ selected: who === '' })}>Back to the queue order</option>`}
+        </select>
+        ${lead && seg([{ id: 'proci', label: html`${icon('swap', 13)} Set Proci` }, { id: 'leave', label: html`${icon('cal', 13)} Add leave` }], mode, 'rota.calMode')}
+        ${S.infoTip('rota-how', 'How the rota works', html`
+          <span>One list runs the rota: who is the Proci each week.</span>
+          <span>The <b>Proci</b> is Main Proci Monday–Thursday and Weekend Support, and rests Friday and the Monday after.</span>
+          <span>The <b>Backup</b> is next week's Proci on Monday and Friday, and last week's Proci Tuesday–Thursday. On Friday, last week's Proci is Main.</span>
+          <span>If the Main Proci is on leave, the Backup moves up and the Proci two weeks ahead (Backup ×2) becomes Backup.</span>
+          <span>Click a leave bar to see or cancel it. Click a day with no person picked to show that week in the shift grid.</span>`)}
       </div>
+      <div class="row small">
+        <span class="${cls(u.lvStart || who ? 'ink2' : 'muted')}">${icon('bolt', 13)} ${hint}</span>
+        ${mode === 'leave' && html`<input class="in sm brush-note" maxlength="120" value="${u.note}" data-input="rota.calNote" placeholder="Note (optional), e.g. vacation" aria-label="Leave note">`}
+        ${u.lvStart && html`<button class="btn ghost sm" data-click="rota.calCancel">Cancel</button>`}
+      </div>
+
       <div class="cal-legend">
         <span><i class="ev-sw W"></i>Weekly Proci (Main Mon–Thu + Weekend)</span>
         <span><i class="ev-sw PL"></i>Leave</span>
@@ -287,9 +287,6 @@
 
       ${u.wsel && weekPanel(u.wsel, v, lead)}
 
-      <details class="small muted cal-foot"><summary>How the rota works</summary>
-        <p>One list runs the rota: who is the Proci each week. The Proci is Main Proci Monday–Thursday and Weekend Support, and rests Friday and the Monday after. The Backup is next week's Proci on Monday and Friday and last week's Proci Tuesday–Thursday; on Friday last week's Proci is Main. If the Main Proci is on leave, the Backup moves up and the Proci two weeks ahead (Backup ×2) becomes Backup. Click a leave bar to see or cancel it; click a day with no person picked to show that week in the shift grid.</p>
-      </details>
     </section>`
   }
 
@@ -329,19 +326,16 @@
     return { v, lead, u, order, dirty: !!u.draft && !sameList(u.draft, saved), hasQueue: v.orders.length > 0, from: u.from, thisWeek: mondayOf(today()) }
   }
   // Start week, Save / Discard: shown in the grid's card when there's something to save.
+  // Save / Discard for a reordered Proci queue (drag the shift grid's rows). Shown only when
+  // there's something to save; the queue starts this week.
   function pqControls(st = pqState()) {
     if (!st.lead) return ''
-    const { u, v, dirty, hasQueue, order, thisWeek } = st
+    const { v, u, dirty, hasQueue, order } = st
+    if (!dirty && hasQueue) return ''
     const overrides = [...v.weeks.keys()].filter((w) => w >= u.from)
-    const startOpts = Array.from({ length: 8 }, (_, i) => addDays(thisWeek, 7 * i))
-    return html`<div class="${cls('pq-bar', (dirty || !hasQueue) && 'on')}">
-      ${icon('swap', 15)}
-      <span class="small">${dirty ? html`<b>Proci order changed.</b>` : !hasQueue ? html`<b>No Proci queue saved yet.</b> This order is a suggestion.` : html`<b>Proci queue</b>`} <span class="muted">Drag rows to reorder; the top row is the Proci of the start week, the next row the week after, and so on round.</span></span>
-      <span class="spacer"></span>
-      <label class="row tight small"><span class="muted">Starts</span><select class="in sm" data-change="rota.qFrom" aria-label="Queue starts the week of">${startOpts.map((w) => html`<option value="${w}" ${S.attrs({ selected: w === u.from })}>${fmtDay(w, { day: 'numeric', month: 'short' })}${w === thisWeek ? ' (this week)' : ''}</option>`)}</select></label>
+    return html`<span class="pq-save">${dirty ? html`<b>Proci order changed</b>` : html`<b>Proci order not saved yet</b>`}
       ${dirty && html`<button class="btn ghost sm" data-click="rota.qDiscard">Discard</button>`}
-      ${(dirty || !hasQueue) && html`<button class="btn primary sm" data-click="rota.qSave" ${S.attrs({ disabled: order.length < 3, title: overrides.length ? `${overrides.length} one-off week${overrides.length > 1 ? 's' : ''} from then on will follow the new order` : null })}>${icon('check', 14)}Save order</button>`}
-    </div>`
+      <button class="btn primary sm" data-click="rota.qSave" ${S.attrs({ disabled: order.length < 3, title: overrides.length ? `${overrides.length} one-off week${overrides.length > 1 ? 's' : ''} from then on will follow the new order` : null })}>${icon('check', 14)}Save order</button></span>`
   }
   // Which coming week a person is next the Proci (from the queue), for the row label.
   function nextProciWeek(soeid, st = pqState()) {
@@ -420,6 +414,7 @@
     'rota.qUnswap': async (el) => { if (await qm.send({ type: 'rotaSet', week: el.dataset.v, soeid: null })) S.dispatch({ type: 'toast', text: `The week of ${fmtDay(el.dataset.v, { day: 'numeric', month: 'short' })} follows the queue again` }) },
     'rota.calMonth': (el) => S.set(ui(), { month: el.dataset.v, sel: null }),
     'rota.calMode': (el) => S.set(ui(), { mode: el.dataset.v, who: null, lvStart: null }),
+    'rota.calWhoSel': (el) => S.set(ui(), { who: el.value === '__none' ? null : el.value, lvStart: null }),
     'rota.calWho': (el) => { const u = ui(); S.set(u, { who: u.who === el.dataset.v ? null : el.dataset.v, lvStart: null }) },
     'rota.calNote': (el) => { ui().note = el.value },
     'rota.calCancel': () => S.set(ui(), { lvStart: null }),

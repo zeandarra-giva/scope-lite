@@ -34,7 +34,7 @@
     return S.ui('p:settings', () => ({
       fields: [['Timezone', 'Asia/Manila (UTC+8)'], ['Phone', '+63 917 555 0142'], ['Desk', 'Tower 2 · 14F · D-21']],
       nf: { k: '', v: '' },
-      profile: { email: `${me.name.toLowerCase().replace(' ', '.')}@corp.example`, manager: me.role === 'Manager' ? 'Service Ops Manager' : 'Andrea Santos' },
+      profile: { email: `${me.name.toLowerCase().replace(/[^a-z]+/g, '.').replace(/^\.|\.$/g, '')}@corp.example`, manager: me.role === 'Manager' ? 'Service Ops Manager' : (S.ANALYSTS.find((a) => a.role === 'Manager') || { name: 'Team lead' }).name },
       hover: null,
       reqs: LEAVE_REQUESTS,
       newLeave: { type: 'Personal leave', from: '', days: 1 },
@@ -221,7 +221,7 @@
       const { newLeave, reqs } = u
       if (!newLeave.from) return
       const from = new Date(newLeave.from + 'T09:00').getTime()
-      S.set(u, { reqs: [{ id: `LV-${2300 + reqs.length}`, type: newLeave.type, from, to: from + (newLeave.days - 1) * DAY, days: Number(newLeave.days), status: 'Pending', approver: me.role === 'Manager' ? 'Service Ops Manager' : 'Andrea Santos' }, ...reqs] })
+      S.set(u, { reqs: [{ id: `LV-${2300 + reqs.length}`, type: newLeave.type, from, to: from + (newLeave.days - 1) * DAY, days: Number(newLeave.days), status: 'Pending', approver: me.role === 'Manager' ? 'Service Ops Manager' : (S.ANALYSTS.find((a) => a.role === 'Manager') || { name: 'Team lead' }).name }, ...reqs] })
       S.dispatch({ type: 'toast', text: 'Leave request sent for approval' })
     },
   })

@@ -126,6 +126,11 @@
     }).sort((a, b) => a.away - b.away || (rank[a.role] ?? 9) - (rank[b.role] ?? 9) || a.p.name.localeCompare(b.p.name))
     // Only who works today: signed in, or scheduled in Team Management. Everyone else
     // (leave, rest day, no shift) is summed up in one line underneath.
+    // Why someone is off. The week's Proci rests on Friday (and the Monday after), when last
+    // week's Proci is Main: say so, so "Proci this week" and today's Main Proci don't look wrong.
+    const P = S.rota.procOf(S.rota.mondayOf(day))
+    const first = (s) => ((S.qm.roster.find((q) => q.soeid === s) || {}).name || '').split(' ')[0]
+    const offWhy = (x) => x.pl.role === 'LEAVE' ? 'leave' : x.pl.role === 'REST' ? (x.p.soeid === P ? `this week's Proci, rest day${r.main ? `; ${first(r.main)} is Main Proci today` : ''}` : 'rest day') : 'no shift set'
     const list = rows.filter((x) => x.working)
     const off = rows.filter((x) => !x.working)
     const roleTag = (x) => {
@@ -151,7 +156,7 @@
             <span class="ts-who"><b title="${x.p.name}">${x.p.name}</b><span class="${cls('ts-status small', x.status[0])}">${x.status[1]}</span></span>
             <span class="ts-tags">${roleTag(x)}${shiftTag(x)}</span>
           </li>`)}</ol>` : html`<div class="empty">Nobody is scheduled or signed in today.</div>`}
-        ${off.length > 0 && html`<div class="small muted">Off today: ${off.map((x) => `${x.p.name.split(' ')[0]} (${x.pl.role === 'LEAVE' ? 'leave' : x.pl.role === 'REST' ? 'rest day' : 'no shift set'})`).join(', ')}</div>`}
+        ${off.length > 0 && html`<div class="small muted">Off today: ${off.map((x) => `${x.p.name.split(' ')[0]} (${offWhy(x)})`).join(', ')}</div>`}
       </div>
     </div>`
   }
@@ -161,11 +166,11 @@
     const me = S.qm.me()
     const lead = me.accessRole === 'Lead'
     const m = metrics()
-    const u = S.ui('p:home:tabs', () => ({ tab: ['queue', 'strike', 'handover', 'verify', 'all'].includes(S.route.tab) ? S.route.tab : 'queue' }))
+    const u = S.ui('p:home:tabs', () => ({ tab: ['queue', 'strike', 'eod', 'handover', 'verify', 'all'].includes(S.route.tab) ? S.route.tab : 'queue' }))
     const tab = !lead && (u.tab === 'verify' || u.tab === 'all') ? 'queue' : u.tab
     S.qm.team.drawers(me)
     Q().importModal(me)
-    const healthState = m.sla ? 'crit' : m.slo ? 'warn' : 'good'
+    const healthState = !m.open.length ? undefined : m.sla ? 'crit' : m.slo ? 'warn' : 'good' // nothing open: neutral, not "100% healthy"
     return html`
       <section class="grid g-kpi home-top" aria-label="Queue health">
         ${S.kpi({ label: 'Open incidents', icon: 'alert', value: m.open.length, state: m.p1 ? 'crit' : undefined,
@@ -173,12 +178,13 @@
           foot: html`<span class="prio P1">P1 ${m.p1}</span><span class="prio P2">P2 ${m.p2}</span><span>${m.eers} EERS</span>` })}
         ${S.kpiShell({ label: 'Queue health', icon: 'clock', state: healthState, info: html`
             <span>Measured on <b>time since the ticket was last touched</b> in ServiceNow, not its total age (the team's QueueManager rule).</span>
-            <span><b>SLO</b> ${m.v.settings['inc.sloHours']} h and <b>SLA</b> ${m.v.settings['inc.slaHours']} h for regular INC; EERS ${m.v.settings['eers.sloHours']} h / ${m.v.settings['eers.slaHours']} h. <b>Backlog</b>: untouched since before ${m.v.settings.backlogHour} today. Change them in Team Management → Team settings.</span>` }, html`
+            <span><b>SLO</b> ${m.v.settings['inc.sloHours']} h and <b>SLA</b> ${m.v.settings['inc.slaHours']} h for regular INC; EERS ${m.v.settings['eers.sloHours']} h / ${m.v.settings['eers.slaHours']} h; critical (P1) ${m.v.settings['crit.sloHours'] * 60} min / ${m.v.settings['crit.slaHours'] * 60} min. <b>Backlog</b>: created in ServiceNow before today's Early shift start (${m.v.settings['early.start']}) or on an earlier day. Change them in Team Management → Team settings.</span>` }, html`
           <div class="row" style="flex-wrap:nowrap;gap:14px">
-            ${S.ring(m.within, healthState, 'Within SLO')}
+            ${m.open.length ? S.ring(m.within, healthState, 'Within SLO') : html`<div class="ring ring-empty" aria-label="No open tickets"><svg width="88" height="88" viewBox="0 0 88 88"><circle cx="44" cy="44" r="38" fill="none" stroke="var(--surface-3)" stroke-width="10"/></svg><b>—</b></div>`}
             <div class="stack" style="gap:6px;flex:1">
-              <div><div class="small ink2">Within SLO</div><b class="num">${Math.round(m.within * 100)}% of open</b></div>
-              <div class="small"><b class="num">${m.slo}</b> past SLO · <b class="num">${m.sla}</b> past SLA · <b class="num">${m.backlog}</b> backlog</div>
+              ${m.open.length ? html`<div><div class="small ink2">Within SLO</div><b class="num">${Math.round(m.within * 100)}% of open</b></div>
+              <div class="small"><b class="num">${m.slo}</b> past SLO · <b class="num">${m.sla}</b> past SLA · <b class="num">${m.backlog}</b> backlog</div>`
+              : html`<div><div class="small ink2">No open tickets</div><b>Nothing to measure yet</b></div><div class="small muted">Load the ServiceNow export to see how the queue is doing.</div>`}
             </div>
           </div>`)}
         ${S.kpi({ label: 'Waiting for someone', icon: 'user', tone: m.unassigned ? 'warn' : 'good', value: m.unassigned,
@@ -193,12 +199,14 @@
         <div style="padding:4px 12px 0">${S.tabs([
           { id: 'queue', label: 'Team queue', icon: 'list', count: m.open.length },
           { id: 'strike', label: '3-Strike', icon: 'clock', count: S.strike.rows().length },
+          { id: 'eod', label: 'End of day', icon: 'chart' },
           { id: 'handover', label: 'Shift handover', icon: 'swap' },
           ...(lead ? [{ id: 'verify', label: 'To verify', icon: 'shield', count: S.qm.team.pending() }, { id: 'all', label: 'All manual entries', icon: 'table' }] : []),
         ], tab, 'live.tab')}</div>
         <div class="team-body">
         ${tab === 'queue' && Q().teamQueue(me)}
         ${tab === 'strike' && S.strike.homeTab(me)}
+        ${tab === 'eod' && S.eod.homeTab()}
         ${tab === 'handover' && Q().handover()}
         ${tab === 'verify' && S.qm.team.verify()}
         ${tab === 'all' && html`<div class="card-b">${S.qm.team.all()}</div>`}

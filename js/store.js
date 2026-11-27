@@ -21,11 +21,11 @@ function init() {
     vault: seedVault(),
     codes: RESOLUTION_CODES.map((c) => ({ ...c })),
     approvals: [
-      { id: 'FX-031', ticket: tickets.find((t) => t.priority === 'P1')?.id, code: 'APP-INT-01', fix: codeInfo('APP-INT-01').fix, by: 'Carlo Dizon', at: NOW - 22 * 60e3, status: 'Pending' },
+      { id: 'FX-031', ticket: tickets.find((t) => t.priority === 'P1')?.id, code: 'APP-INT-01', fix: codeInfo('APP-INT-01').fix, by: S.ANALYSTS[3].name, at: NOW - 22 * 60e3, status: 'Pending' },
     ],
     events: [
-      { id: 'e1', kind: 'handover', title: 'Shift handover from Rhea Castillo is waiting for your acknowledgement', at: NOW - 3 * HOUR, page: 'explorer', tab: 'handover' },
-      { id: 'e2', kind: 'leave', title: 'Leave request LV-2291 for Trisha Aquino needs approval', at: NOW - 5 * HOUR, page: 'team', tab: 'schedule' },
+      { id: 'e1', kind: 'handover', title: `Shift handover from ${S.ANALYSTS[6].name} is waiting for your acknowledgement`, at: NOW - 3 * HOUR, page: 'explorer', tab: 'handover' },
+      { id: 'e2', kind: 'leave', title: `Leave request LV-2291 for ${S.ANALYSTS[8].name} needs approval`, at: NOW - 5 * HOUR, page: 'team', tab: 'schedule' },
       { id: 'e3', kind: 'coverage', title: 'Saturday weekend duty has only 1 analyst (minimum 2)', at: NOW - 8 * HOUR, page: 'team', tab: 'schedule' },
       { id: 'e4', kind: 'info', title: 'Resolution code NET-VPN-01 runbook was updated to v3', at: NOW - 26 * HOUR, page: 'explorer', tab: 'codes' },
     ],
@@ -254,7 +254,12 @@ function reducer(state, a) {
 }
 
 
-const currentUser = (state) => byId[state.role === 'lead' ? 'a1' : 'a2']
+// Signed in from the team roster: that person, everywhere (profile, notifications, pages).
+const currentUser = (state) => {
+  const m = S.qm && S.qm.me && S.qm.me()
+  const real = m && S.ANALYSTS.find((a) => a.soeid === m.soeid)
+  return real || byId[state.role === 'lead' ? 'a1' : 'a2']
+}
 
 // Notifications are a mix of events (things that happened) and conditions
 // derived live from the queue, approvals and vault (things that need action).

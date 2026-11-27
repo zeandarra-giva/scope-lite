@@ -186,7 +186,7 @@ const FILLED = {
         <circle cx="44" cy="44" r="${r}" fill="none" stroke="var(--surface-3)" stroke-width="10"/>
         <circle cx="44" cy="44" r="${r}" fill="none" stroke="${color}" stroke-width="10" stroke-linecap="round" stroke-dasharray="${c * value} ${c}"/>
       </svg>
-      <b>${Math.round(value * 100)}</b>
+      <b>${Math.round(value * 100)}%</b>
     </div>`
   }
 
@@ -383,5 +383,43 @@ const FILLED = {
     'ui.drawerReset': (el) => { drawerW[el.dataset.dk] = null; S.storage.set(el.dataset.dk, null); S.render() },
   })
 
-  Object.assign(S, { icon, modal, drawer, tabs, seg, infoTip, kpiShell, kpi, slaPill, prio, toasts, ring, lineChart, barChart, hBars, download, copyText, inline, docText, niceMax, fmtTick })
+  // Insights as a quiet notification list (lead, 2026-11-27): one row per insight with an
+  // unread dot, a one-line headline, a short detail and the card it came from. Clicking a
+  // row opens that card's "i" panel (or runs item.action). Unread = not opened yet in this
+  // browser (kept under storeKey). items: { id, group, tone: crit|warn|good|accent, icon,
+  // title, detail, source, stat, open (infoTip id) | action + v, extra (html) }.
+  function insightFeed({ id, title = 'Insights', sub = '', items, groups = [], limit = 6, actions = '' }) {
+    const u = S.ui(`feed:${id}`, { all: false })
+    const read = (() => { try { return new Set(JSON.parse(localStorage.getItem(`scope-feed:${id}`) || '[]')) } catch { return new Set() } })()
+    const fresh = items.filter((x) => !read.has(x.key || x.id)).length
+    const shown = u.all ? items : items.slice(0, limit)
+    const order = groups.length ? groups : [...new Set(shown.map((x) => x.group || ''))]
+    const row = (x) => html`<li class="${cls('feed-row', !read.has(x.key || x.id) && 'unread')}" data-key="${x.id}">
+      <button class="feed-main" data-click="ui.feedOpen" data-feed="${id}" data-k="${x.key || x.id}" data-open="${x.open || ''}" data-act="${x.action || ''}" data-v="${x.v || ''}">
+        <span class="${cls('feed-ic', x.tone)}">${icon(x.icon || 'spark', 14)}</span>
+        <span class="feed-txt"><b>${x.title}</b>${x.detail && html`<span class="muted">${x.detail}</span>`}</span>
+        <span class="feed-meta">${x.stat && html`<b class="num">${x.stat}</b>`}${x.source && html`<span class="feed-src">${x.source}</span>`}</span>
+      </button>${x.extra || ''}</li>`
+    return html`<section class="card feed" aria-label="${title}">
+      <div class="card-h"><h2>${title}</h2>${fresh > 0 ? html`<span class="pill accent feed-new">${fresh} new</span>` : html`<span class="muted small">All caught up</span>`}${sub && html`<span class="muted small">${sub}</span>`}
+        <span class="spacer"></span>${fresh > 0 && html`<button class="btn ghost sm" data-click="ui.feedRead" data-feed="${id}" data-keys="${items.map((x) => x.key || x.id).join('|')}">Mark all read</button>`}${actions}</div>
+      <div class="card-b feed-b">
+        ${items.length ? order.map((g) => { const list = shown.filter((x) => (x.group || '') === g); return list.length ? html`${g && html`<div class="feed-g">${g}</div>`}<ul class="feed-list">${list.map(row)}</ul>` : '' })
+          : html`<div class="empty small">No insights yet. They appear once there's data for this period.</div>`}
+        ${items.length > limit && html`<button class="link-btn small feed-more" data-click="ui.feedAll" data-feed="${id}">${u.all ? 'Show fewer' : `Show all ${items.length}`}</button>`}
+      </div></section>`
+  }
+  const feedMark = (id, keys) => { try { const k = `scope-feed:${id}`; const s = new Set(JSON.parse(localStorage.getItem(k) || '[]')); keys.forEach((x) => s.add(x)); localStorage.setItem(k, JSON.stringify([...s].slice(-400))) } catch {} }
+  S.on({
+    'ui.feedOpen': (el) => {
+      feedMark(el.dataset.feed, [el.dataset.k])
+      if (el.dataset.open) S.set(S.ui('p:info'), { id: el.dataset.open })
+      else if (el.dataset.act) S.dispatchClick ? S.dispatchClick(el.dataset.act, el) : S.render()
+      else S.render()
+    },
+    'ui.feedRead': (el) => { feedMark(el.dataset.feed, (el.dataset.keys || '').split('|')); S.render() },
+    'ui.feedAll': (el) => { const u = S.ui(`feed:${el.dataset.feed}`); S.set(u, { all: !u.all }) },
+  })
+
+  Object.assign(S, { insightFeed, icon, modal, drawer, tabs, seg, infoTip, kpiShell, kpi, slaPill, prio, toasts, ring, lineChart, barChart, hBars, download, copyText, inline, docText, niceMax, fmtTick })
 })()
